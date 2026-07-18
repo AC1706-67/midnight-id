@@ -62,22 +62,13 @@ export class MidnightIdSimulator {
     return this.circuitContext.currentPrivateState;
   }
 
-  // Compute the commitment for a secret key the same way the circuit does,
-  // using the contract's own exported pure circuit if available; otherwise
-  // tests pass commitments computed via the circuit context.
+  // Compute a commitment using the contract's own pure circuit -
+  // guaranteed to match what checkIn/verifyCredential expect.
   public commitmentFor(secretKey: Uint8Array): Uint8Array {
-    const saved = this.circuitContext.currentPrivateState;
-    this.circuitContext.currentPrivateState = {
+    return this.contract.circuits.publicCommitment(
+      this.circuitContext,
       secretKey,
-      leafIndex: null,
-      currentPath: null,
-    };
-    // enroll takes the commitment as a parameter, so we compute it here
-    // exactly as the circuit does: persistentHash([domain, sk]).
-    // The managed contract exports pure helpers; if not, we derive via
-    // a probe check-in path. For the simulator we use the runtime hash.
-    this.circuitContext.currentPrivateState = saved;
-    throw new Error("commitmentFor is provided by the test file");
+    ).result;
   }
 
   public enroll(commitment: Uint8Array): Ledger {

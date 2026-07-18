@@ -4,7 +4,6 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { persistentHash } from "@midnight-ntwrk/compact-runtime";
 import { MidnightIdSimulator } from "./midnight-id-simulator.js";
 
 // --- helpers ---------------------------------------------------------
@@ -15,16 +14,6 @@ const textBytes32 = (s: string): Uint8Array => {
   out.set(enc.slice(0, 32));
   return out;
 };
-
-const COMMITMENT_DOMAIN = textBytes32("midnight-id:commitment");
-
-// Compute the commitment exactly as the circuit does:
-// persistentHash([pad(32,"midnight-id:commitment"), sk])
-const commitmentFor = (sk: Uint8Array): Uint8Array =>
-  persistentHash(
-    { tag: "bytes[32]", length: 2 } as never,
-    [COMMITMENT_DOMAIN, sk] as never,
-  ) as unknown as Uint8Array;
 
 const DAY_1 = textBytes32("2026-07-17");
 const DAY_2 = textBytes32("2026-07-18");
@@ -38,13 +27,13 @@ const strangerSk = textBytes32("stranger-secret-key");
 describe("Midnight ID", () => {
   it("enrolls a credential and increments enrollment count", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const ledger = sim.enroll(commitmentFor(aliceSk));
+    const ledger = sim.enroll(sim.commitmentFor(aliceSk));
     expect(ledger.enrollmentCount).toEqual(1n);
   });
 
   it("checks in with a valid enrolled credential", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);
@@ -60,7 +49,7 @@ describe("Midnight ID", () => {
 
   it("rejects check-in with a wrong secret key", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);
@@ -75,7 +64,7 @@ describe("Midnight ID", () => {
 
   it("rejects double check-in on the same day (nullifier)", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);
@@ -91,7 +80,7 @@ describe("Midnight ID", () => {
 
   it("allows check-in on a new day (nullifier is per-date)", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);
@@ -108,8 +97,8 @@ describe("Midnight ID", () => {
 
   it("supports multiple enrolled credentials independently", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const aliceCommitment = commitmentFor(aliceSk);
-    const bobCommitment = commitmentFor(bobSk);
+    const aliceCommitment = sim.commitmentFor(aliceSk);
+    const bobCommitment = sim.commitmentFor(bobSk);
 
     sim.enroll(aliceCommitment);
     sim.enroll(bobCommitment);
@@ -128,7 +117,7 @@ describe("Midnight ID", () => {
 
   it("verifies an enrolled credential without revealing it", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);
@@ -143,7 +132,7 @@ describe("Midnight ID", () => {
 
   it("rejects credential verification for a stranger", () => {
     const sim = new MidnightIdSimulator(aliceSk);
-    const commitment = commitmentFor(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk);
     sim.enroll(commitment);
 
     const path = sim.pathFor(0n, commitment);

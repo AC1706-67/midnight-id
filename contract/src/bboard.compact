@@ -14,6 +14,14 @@ witness credentialPath(): MerkleTreePath<10, Bytes<32>>;
 
 // ---------- Circuits ----------
 
+// Pure helper: compute the credential commitment for a secret key.
+// Exported so the app and tests derive commitments identically to the circuits.
+export pure circuit publicCommitment(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight-id:commitment"), sk]
+  );
+}
+
 // Org-side: insert a credential commitment.
 // The tree insert never reveals the value - core privacy guarantee.
 export circuit enroll(commitment: Bytes<32>): [] {
