@@ -22,8 +22,8 @@ import * as CompiledBBoardContract from "./managed/bboard/contract/index.js";
 import * as Witnesses from "./witnesses";
 
 export const CompiledBBoardContractContract = CompiledContract.make<
-  CompiledBBoardContract.Contract<Witnesses.BBoardPrivateState>
->("BBoard", CompiledBBoardContract.Contract<Witnesses.BBoardPrivateState>).pipe(
+  CompiledBBoardContract.Contract<Witnesses.MidnightIdPrivateState>
+>("BBoard", CompiledBBoardContract.Contract<Witnesses.MidnightIdPrivateState>).pipe(
   CompiledContract.withWitnesses(Witnesses.witnesses),
   CompiledContract.withCompiledFileAssets("./managed/bboard"),
 );
