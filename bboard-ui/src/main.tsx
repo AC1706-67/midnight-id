@@ -30,7 +30,6 @@ import CssBaseline from '@mui/material/CssBaseline';
 import { theme } from './config/theme';
 import '@midnight-ntwrk/dapp-connector-api';
 import * as pino from 'pino';
-import { DeployedBoardProvider } from './contexts';
 
 const networkId = import.meta.env.VITE_NETWORK_ID as NetworkId;
 // contract address: 0200dbf964f541e1950883f5b2f539b66fd6111e46ce8e6e9551fbdd180114d5dd5b
@@ -48,9 +47,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <CssBaseline />
     <ThemeProvider theme={theme}>
-      <DeployedBoardProvider logger={logger}>
         <App />
-      </DeployedBoardProvider>
     </ThemeProvider>
   </React.StrictMode>,
 );
