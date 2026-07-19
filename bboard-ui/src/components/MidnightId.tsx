@@ -7,13 +7,13 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   Box,
   Button,
+  createTheme,
+  ThemeProvider,
   Card,
   CardContent,
   CardHeader,
   Chip,
   Divider,
-  MenuItem,
-  Select,
   TextField,
   Typography,
 } from '@mui/material';
@@ -31,11 +31,21 @@ type Snapshot = {
   error?: string;
 };
 
+const selectStyle: React.CSSProperties = {
+  padding: '10px 12px',
+  fontSize: '1rem',
+  color: '#e8e8e8',
+  backgroundColor: '#1e1e1e',
+  border: '1px solid #555',
+  borderRadius: 6,
+  width: '100%',
+};
+
 export const MidnightId: React.FC = () => {
   const [snap, setSnap] = useState<Snapshot | null>(null);
   const [enrollAlias, setEnrollAlias] = useState('');
-  const [checkInIdx, setCheckInIdx] = useState<number | ''>('');
-  const [verifyIdx, setVerifyIdx] = useState<number | ''>('');
+  const [checkInIdx, setCheckInIdx] = useState('');
+  const [verifyIdx, setVerifyIdx] = useState('');
   const [message, setMessage] = useState('');
   const [verifyResult, setVerifyResult] = useState<'valid' | 'invalid' | null>(null);
 
@@ -50,7 +60,6 @@ export const MidnightId: React.FC = () => {
     return data;
   }, []);
 
-  // Load current state when the page opens - refresh-proof.
   useEffect(() => {
     call('/state')
       .then(setSnap)
@@ -83,7 +92,7 @@ export const MidnightId: React.FC = () => {
     }
     try {
       const data = await call('/check-in', {
-        index: checkInIdx,
+        index: Number(checkInIdx),
         date: new Date().toISOString().slice(0, 10),
       });
       setSnap(data);
@@ -104,7 +113,7 @@ export const MidnightId: React.FC = () => {
       return;
     }
     try {
-      const data = await call('/verify', { index: verifyIdx });
+      const data = await call('/verify', { index: Number(verifyIdx) });
       setSnap(data);
       setVerifyResult('valid');
       setMessage('Verified: holds a valid Midnight ID credential. Nothing else revealed.');
@@ -118,6 +127,7 @@ export const MidnightId: React.FC = () => {
   const events = snap?.events ?? [];
 
   return (
+    <ThemeProvider theme={createTheme({ palette: { mode: 'dark' } })}>
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, p: 2, maxWidth: 1100, mx: 'auto' }}>
       <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
         <Card sx={{ flex: 1, minWidth: 260 }}>
@@ -138,21 +148,20 @@ export const MidnightId: React.FC = () => {
         <Card sx={{ flex: 1, minWidth: 260 }}>
           <CardHeader title="Check In" subheader="Participant proves membership" />
           <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            <Select
-              size="small"
-              displayEmpty
+            <select
+              style={selectStyle}
               value={checkInIdx}
-              onChange={(e) => setCheckInIdx(e.target.value as number)}
+              onChange={(e) => setCheckInIdx(e.target.value)}
             >
-              <MenuItem value="" disabled>
+              <option value="" disabled>
                 Select credential holder
-              </MenuItem>
+              </option>
               {people.map((p) => (
-                <MenuItem key={p.index} value={p.index}>
+                <option key={p.index} value={p.index}>
                   {p.alias}
-                </MenuItem>
+                </option>
               ))}
-            </Select>
+            </select>
             <Button variant="contained" size="large" onClick={onCheckIn} disabled={people.length === 0}>
               Check in today
             </Button>
@@ -162,21 +171,20 @@ export const MidnightId: React.FC = () => {
         <Card sx={{ flex: 1, minWidth: 260 }}>
           <CardHeader title="Verify" subheader="A different org checks validity" />
           <CardContent sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
-            <Select
-              size="small"
-              displayEmpty
+            <select
+              style={selectStyle}
               value={verifyIdx}
-              onChange={(e) => setVerifyIdx(e.target.value as number)}
+              onChange={(e) => setVerifyIdx(e.target.value)}
             >
-              <MenuItem value="" disabled>
+              <option value="" disabled>
                 Select credential
-              </MenuItem>
+              </option>
               {people.map((p) => (
-                <MenuItem key={p.index} value={p.index}>
+                <option key={p.index} value={p.index}>
                   {p.alias}
-                </MenuItem>
+                </option>
               ))}
-            </Select>
+            </select>
             <Button variant="outlined" onClick={onVerify} disabled={people.length === 0}>
               Verify credential
             </Button>
@@ -227,5 +235,6 @@ export const MidnightId: React.FC = () => {
         </CardContent>
       </Card>
     </Box>
+    </ThemeProvider>
   );
 };
