@@ -1,277 +1,157 @@
-# Bulletin Board DApp
+# Midnight ID 🌙
 
-This project is built on the [Midnight Network](https://midnight.network/).
+**Portable anonymous credentials for community service organizations — built on Midnight.**
 
-[![Generic badge](https://img.shields.io/badge/Compact%20Compiler-0.30.0-1abc9c.svg)](https://shields.io/)
-[![Generic badge](https://img.shields.io/badge/TypeScript-5.9.3-blue.svg)](https://shields.io/)
+Built fresh during the MLH Midnight Hackathon (July 17–19, 2026).
 
+## The problem
 
-> **Use this repo as a template. Do not fork it.**
->  
-> This repository is intended to be used via GitHub’s “Use this template” flow.  
-> Forking this repo is discouraged, as forks are not tracked as independent projects.
+Community organizations — drop-in centers, peer recovery services, shelters, Naloxone distribution hubs — need to know that the person in front of them is enrolled, eligible, and showing up. But for the people they serve, being *on a list* can cost a job, housing, or custody. Federal privacy law (42 CFR Part 2) exists precisely because a substance-use service record is one of the most dangerous pieces of paper a person can have.
 
-A Midnight smart contract example demonstrating a simple one-item bulletin board with zero-knowledge proofs on testnet. Users can post a single message at a time, and only the message author can remove it.
+Today organizations choose between two bad options: keep identifying records (a breach risk and a trust barrier), or keep nothing (and lose the ability to verify anything, report to funders, or help participants prove their own progress).
 
-## Project Structure
+## What Midnight ID does
 
-```
-bulletin-board/
-├── contract/               # Smart contract in Compact language
-│   └── src/               # Contract source and utilities
-├── api/                   # Methods, classes and types for CLI and UI
-├── bboard-cli/            # Command-line interface
-│   └── src/               # CLI implementation
-└── bboard-ui/             # Web browser interface
-    └── src/               # Web UI implementation
-```
+Midnight ID is a credential layer where **the organization vouches once, and the math takes over**:
 
-## Prerequisites
+- **Enroll** — org staff issue a credential. Only a cryptographic commitment (a hash of a secret key) goes on-chain. The participant's alias never leaves the org's local device.
+- **Check In** — the participant proves they hold an enrolled credential via a zero-knowledge Merkle membership proof. A daily nullifier prevents double check-ins without ever linking check-ins to each other or to an identity.
+- **Verify** — a *different* organization can confirm "this person holds a valid credential" and learn nothing else. Not who they are, not where they enrolled, not when they attended.
 
-### 1. Node.js Version Check
+The public ledger sees only: commitments, burned nullifiers, and counters. **No names. No identities. Only proofs, hashes, and counts.**
 
-You need Node.js:
+## Privacy properties
 
-```bash
-node --version
-```
+| Hidden (always) | Disclosed (public) |
+|---|---|
+| Participant identity | Enrollment count |
+| Secret keys | Total check-in count |
+| Which credential checked in | Commitment hashes |
+| Check-in history per person | Daily nullifiers (unlinkable) |
 
-Expected output: `v24.11.1` or higher. The repository includes an [.nvmrc](./.nvmrc) pinned to `24.11.1`.
+- **Domain separation**: commitment and nullifier hashes use distinct domain prefixes, so values can never be confused or cross-correlated.
+- **Daily nullifiers**: hash(sk, date) — the same person produces a different nullifier every day, so the ledger cannot link two check-ins to one credential.
+- **Historic Merkle roots**: the tree accepts prior roots, so credentials stay valid as new participants enroll.
 
-If you get a lower version: [Install Node.js LTS](https://nodejs.org/).
+## Architecture
 
-### 2. Docker Installation
+**Compact contract** (contract/src/bboard.compact) — 3 circuits, all compiled and tested:
+- enroll(commitment) — inserts a credential commitment into a HistoricMerkleTree<10, Bytes<32>>
+- checkIn(currentDate) — ZK membership proof + nullifier burn + counter increment
+- verifyCredential() — pure membership proof for third-party verification
+- publicCommitment(sk) — exported pure circuit so app and contract derive commitments identically
 
-The [proof server](https://docs.midnight.network/develop/tutorial/using/proof-server) runs in Docker and is required for both CLI and UI to generate zero-knowledge proofs:
+**Tests** (contract/src/test/) — 8/8 passing, with a success *and* failure case for every circuit: wrong-key check-ins rejected, same-day double check-ins rejected, strangers fail verification.
 
-```bash
-docker --version
-```
+**Demo stack** — a Node demo server runs the compiled circuits through the contract simulator and plays the role of the org's local device (roster of aliases + keys) and the chain (the contract ledger). A React UI presents the three panels plus a live "What the chain sees" strip. This mirrors the intended production architecture: operational data stays in an org-controlled store appropriate for federal privacy compliance; **only the credential proof layer belongs on-chain**. That split is a design position, not a shortcut — sensitive service records should never live on a public ledger, even encrypted.
 
-Expected output: `Docker version X.X.X`.
+## Running it
 
-If Docker is not found: [Install Docker Desktop](https://docs.docker.com/desktop/). Make sure Docker Desktop is running.
+    # 1. Compile the contract (requires compactc 0.31.0)
+    cd contract && npm install && npm run compact && npm run build
 
-### 3. Lace Wallet Extension (UI Only)
+    # 2. Run the tests
+    npm run test
 
-For the web interface, install the official Lace wallet extension on [Chrome Store](https://chromewebstore.google.com/detail/lace/gafhhkghbfjjkeiendhlofajokpaflmk) or the [Edge Store](https://microsoftedge.microsoft.com/addons/detail/lace/efeiemlfnahiidnjglmehaihacglceia) (tested with version 1.36.0).
+    # 3. Start the demo server (from repo root)
+    cd .. && node demo-server.mjs
 
-After installing, set up the Midnight wallet:
+    # 4. Start the UI (second terminal)
+    cd bboard-ui && npm install && npm run dev
+    # open http://localhost:5173
 
-1. Create a **new wallet** — Midnight will appear as a network option
-2. Set **Network** to **Preprod**
-3. Set **Proof server** to **Local (http://localhost:6300)** — this must point to your local proof server started via Docker
-4. Click **Enter Wallet**
-5. Fund your wallet with tNIGHT tokens from the [Preprod Faucet](https://midnight-tmnight-preprod.nethermind.dev/)
-6. Go to **Tokens** in the wallet, click **Generate tDUST**, and confirm the transaction — tDUST tokens are required to pay transaction fees on preprod
+## Honest trade-offs
 
-## Setup Instructions
+- **Enrollment gating**: in this demo anyone can enroll. Production requires an admin-gated enroll (org keys), which is standard Compact practice but out of 48-hour scope.
+- **Verification proves membership, not attendance**: verifyCredential proves "validly enrolled," deliberately *not* "attended N times" — per-credential attendance counts would require exactly the linkability this design forbids. Milestone credentials (prove >= N check-ins without revealing which) are the natural next circuit.
+- **Demo runs circuits locally**, not against Preprod. The contract compiles with the standard toolchain and the provider plumbing for Preprod deployment is retained in api/ for the next milestone.
 
-### Install Project Dependencies
+## Why this matters
 
-```bash
-npm install
-```
+I work as a Peer Lead at an opioid drop-in center serving roughly 15,000 contacts a year. The people who walk through our doors ask one question before any other: *"who's going to see this?"* Midnight ID is the first architecture I've found where the honest answer is: **no one — and I can prove it.**
 
-This repository uses npm workspaces. Run installation once from the repository root.
+Built with lived experience, at night. Because you ain't coding with Midnight unless you're coding at night. 🌙
 
-### Compile the Smart Contract
+## Author
 
-The Compact compiler (`compactc 0.31.0`) generates TypeScript bindings and zero-knowledge circuits from the smart contract source code:
+**Andres F. Chavez** — Anonymous Haven LLC · El Paso, TX
+GitHub: [@AC1706-67](https://github.com/AC1706-67)
+EOFcd /mnt/c/Dev/midnight-id && cat > README.md << 'EOF'
+# Midnight ID 🌙
 
-```bash
-cd contract
-npm run compact    # Compiles the Compact contract
-npm run build      # Copies compiled files to dist/
-cd ..
-```
+**Portable anonymous credentials for community service organizations — built on Midnight.**
 
-Expected output:
+Built fresh during the MLH Midnight Hackathon (July 17–19, 2026).
 
-```
-> compact
-> compact compile src/bboard.compact ./src/managed/bboard
+## The problem
 
-Compiling 2 circuits:
-  circuit "post" (k=14, rows=10070)
-  circuit "takeDown" (k=14, rows=10087)
+Community organizations — drop-in centers, peer recovery services, shelters, Naloxone distribution hubs — need to know that the person in front of them is enrolled, eligible, and showing up. But for the people they serve, being *on a list* can cost a job, housing, or custody. Federal privacy law (42 CFR Part 2) exists precisely because a substance-use service record is one of the most dangerous pieces of paper a person can have.
 
-> build
-> rm -rf dist && tsc --project tsconfig.build.json && cp -Rf ./src/managed ./dist/managed && cp ./src/bboard.compact ./dist
+Today organizations choose between two bad options: keep identifying records (a breach risk and a trust barrier), or keep nothing (and lose the ability to verify anything, report to funders, or help participants prove their own progress).
 
-```
+## What Midnight ID does
 
-### Build the CLI Interface
+Midnight ID is a credential layer where **the organization vouches once, and the math takes over**:
 
-```bash
-cd bboard-cli
-npm run build
-cd ..
-```
+- **Enroll** — org staff issue a credential. Only a cryptographic commitment (a hash of a secret key) goes on-chain. The participant's alias never leaves the org's local device.
+- **Check In** — the participant proves they hold an enrolled credential via a zero-knowledge Merkle membership proof. A daily nullifier prevents double check-ins without ever linking check-ins to each other or to an identity.
+- **Verify** — a *different* organization can confirm "this person holds a valid credential" and learn nothing else. Not who they are, not where they enrolled, not when they attended.
 
-### Build the UI Interface (Optional)
+The public ledger sees only: commitments, burned nullifiers, and counters. **No names. No identities. Only proofs, hashes, and counts.**
 
-Only needed if you want to use the web interface:
+## Privacy properties
 
-```bash
-cd bboard-ui
-npm run build
-cd ..
-```
+| Hidden (always) | Disclosed (public) |
+|---|---|
+| Participant identity | Enrollment count |
+| Secret keys | Total check-in count |
+| Which credential checked in | Commitment hashes |
+| Check-in history per person | Daily nullifiers (unlinkable) |
 
-## Option 1: CLI Interface
+- **Domain separation**: commitment and nullifier hashes use distinct domain prefixes, so values can never be confused or cross-correlated.
+- **Daily nullifiers**: hash(sk, date) — the same person produces a different nullifier every day, so the ledger cannot link two check-ins to one credential.
+- **Historic Merkle roots**: the tree accepts prior roots, so credentials stay valid as new participants enroll.
 
-### Start the Proof Server
+## Architecture
 
-The CLI requires a local proof server running in Docker:
+**Compact contract** (contract/src/bboard.compact) — 3 circuits, all compiled and tested:
+- enroll(commitment) — inserts a credential commitment into a HistoricMerkleTree<10, Bytes<32>>
+- checkIn(currentDate) — ZK membership proof + nullifier burn + counter increment
+- verifyCredential() — pure membership proof for third-party verification
+- publicCommitment(sk) — exported pure circuit so app and contract derive commitments identically
 
-```bash
-cd bboard-cli
-docker compose -f proof-server-local.yml up -d
-```
+**Tests** (contract/src/test/) — 8/8 passing, with a success *and* failure case for every circuit: wrong-key check-ins rejected, same-day double check-ins rejected, strangers fail verification.
 
-This uses `midnightntwrk/proof-server:8.0.3` on `http://127.0.0.1:6300`.
+**Demo stack** — a Node demo server runs the compiled circuits through the contract simulator and plays the role of the org's local device (roster of aliases + keys) and the chain (the contract ledger). A React UI presents the three panels plus a live "What the chain sees" strip. This mirrors the intended production architecture: operational data stays in an org-controlled store appropriate for federal privacy compliance; **only the credential proof layer belongs on-chain**. That split is a design position, not a shortcut — sensitive service records should never live on a public ledger, even encrypted.
 
-### Run the CLI
+## Running it
 
-```bash
-# For preprod network
-npm run preprod-remote
+    # 1. Compile the contract (requires compactc 0.31.0)
+    cd contract && npm install && npm run compact && npm run build
 
-# For preview network
-npm run preview-remote
-```
+    # 2. Run the tests
+    npm run test
 
-### Using the CLI
+    # 3. Start the demo server (from repo root)
+    cd .. && node demo-server.mjs
 
-#### Create a Wallet
+    # 4. Start the UI (second terminal)
+    cd bboard-ui && npm install && npm run dev
+    # open http://localhost:5173
 
-1. Choose option `1` to build a fresh wallet
-2. The system will generate a wallet address and seed
-3. **Save both the address and seed** - you'll need them later
+## Honest trade-offs
 
-Expected output is similar to:
+- **Enrollment gating**: in this demo anyone can enroll. Production requires an admin-gated enroll (org keys), which is standard Compact practice but out of 48-hour scope.
+- **Verification proves membership, not attendance**: verifyCredential proves "validly enrolled," deliberately *not* "attended N times" — per-credential attendance counts would require exactly the linkability this design forbids. Milestone credentials (prove >= N check-ins without revealing which) are the natural next circuit.
+- **Demo runs circuits locally**, not against Preprod. The contract compiles with the standard toolchain and the provider plumbing for Preprod deployment is retained in api/ for the next milestone.
 
-```
-Your wallet seed is: [64-character hex string]
-Using unshielded address: mn_addr_preprod1hdvtst70zfgd8wvh7l8ppp7mcrxnjn56wc5hlxpwflz3fxdykaesrw0ln4 waiting for funds...
-```
+## Why this matters
 
-#### Fund Your Wallet
+I work as a Peer Lead at an opioid drop-in center serving roughly 15,000 contacts a year. The people who walk through our doors ask one question before any other: *"who's going to see this?"* Midnight ID is the first architecture I've found where the honest answer is: **no one — and I can prove it.**
 
-Before deploying contracts, you need testnet tokens.
+Built with lived experience, at night. Because you ain't coding with Midnight unless you're coding at night. 🌙
 
-1. Copy your wallet address from the output above
-2. Visit the [faucet](https://midnight-tmnight-preprod.nethermind.dev/)
-3. Paste your address and request funds
-4. Wait for the CLI to detect the funds (takes 2-3 minutes)
+## Author
 
-Expected output after funding is similar to:
-
-```
-Your NIGHT wallet balance is: 1000000000
-```
-
-#### Deploy Your Contract
-
-1. Choose the contract deployment option
-2. Wait for deployment (takes ~30 seconds)
-3. **Save the contract address** for future use
-
-Expected output:
-
-```
-Deployed bulletin board contract at address: [contract address]
-```
-
-#### Use the Bulletin Board
-
-You can now:
-
-- **Post** a message to the bulletin board
-- **View** the current message
-- **Remove** your message (only if you posted it)
-- **Exit** when done
-
-Each action creates a real transaction on Midnight Testnet using zero-knowledge proofs generated by the proof server.
-
-## Option 2: Web UI Interface
-
-The web interface uses the same proof server and requires additional browser setup.
-
-### Start the Proof Server (if not already running)
-
-If you haven't started the proof server for the CLI, start it now:
-
-```bash
-cd bboard-cli
-docker compose -f proof-server-local.yml up -d
-cd ..
-```
-
-Verify it's running:
-
-```bash
-docker ps
-```
-
-### Start the Web Interface
-
-The UI can run against preprod or preview networks:
-
-```bash
-cd bboard-ui
-
-# For preprod network
-npm run build:start
-
-# For preview network
-npm run build:start:preview
-```
-
-The UI will be available at:
-
-- http://127.0.0.1:8080
-
-### Browser Setup
-
-1. **Open the UI URL** in a browser with Lace wallet extension installed
-2. **Set up Lace wallet** if it's your first time
-3. **Authorize the application** when Lace wallet prompts
-4. Use the bulletin board web interface
-
-## Useful Links
-
-- Get Testnet tNIGHT on [Preprod Faucet](https://midnight-tmnight-preprod.nethermind.dev/) or [Preview Faucet](https://midnight-tmnight-preview.nethermind.dev/)
-- [Midnight Documentation](https://docs.midnight.network/examples/dapps/bboard) - Complete developer guide
-- [Compatibility Matrix](https://docs.midnight.network/relnotes/support-matrix) - Current supported Midnight component versions
-- [Compact Language Guide](https://docs.midnight.network/compact/writing) - Smart contract language reference
-- Get Lace wallet on the [Chrome Store](https://chromewebstore.google.com/detail/lace/gafhhkghbfjjkeiendhlofajokpaflmk) or the [Edge Store](https://microsoftedge.microsoft.com/addons/detail/lace/efeiemlfnahiidnjglmehaihacglceia)
-
-## Troubleshooting
-
-| Common Issue                       | Solution                                                                                                  |
-| ---------------------------------- |-----------------------------------------------------------------------------------------------------------|
-| `npm install` fails                | Ensure you're using Node `v24.11.1` or newer. Older Node versions can install with warnings but are not the target runtime |
-| Contract compilation fails         | Ensure the Compact toolchain is installed and run `npm run compact` from `contract/`                      |
-| Network connection timeout         | CLI requires internet connection, restart if connection times out                                         |
-| Token funding takes too long       | Wait 1-2 minutes, funding is automatic in CLI                                                             |
-| "Application not authorized" error | Start proof server: `docker compose -f proof-server-local.yml up -d`                                      |
-| Lace wallet not detected           | Install Lace wallet browser extension and refresh page                                                    |
-| Docker issues                      | Ensure Docker Desktop is running, check `docker --version`                                                |
-| Port 6300 in use                   | Run `docker compose down` then restart services                                                           |
-| Dependencies won't install         | Use Node.js LTS version. For older npm versions, you may need `--legacy-peer-deps`                        |
-| Contract deployment fails          | Verify wallet has sufficient balance and network connection                                               |
-
-## Notes
-
-- CLI and UI can run simultaneously and share the same proof server
-- Proof server (Docker) is required for both CLI and UI to generate zero-knowledge proofs
-- Contract must be compiled before building CLI or UI
-- Fund your wallet using the testnet faucet before deploying contracts
-
-## Implementation Notes
-
-- **Transaction fee configuration**  
-  The default `additionalFeeOverhead` value (`500_000_000_000_000_000n`) from `@midnight-ntwrk/testkit-js` is required on the `undeployed` network. Lower values can fail with `BalanceCheckOverspend` on the node side. On remote networks, that overhead requires too much dust, so the CLI overrides it to `1_000n`.
-- CLI private state is stored per contract address, matching the `Midnight.js 4.x` private-state provider model.
+**Andres F. Chavez** — Anonymous Haven LLC · El Paso, TX
+GitHub: [@AC1706-67](https://github.com/AC1706-67)
