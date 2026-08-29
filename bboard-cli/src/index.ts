@@ -204,6 +204,7 @@ const participantLoop = async (providers: ParticipantProviders, rli: Interface, 
           break;
         case '4':
           logger.info('Exiting...');
+          await api.close();
           return;
         default:
           logger.error(`Invalid choice: ${choice}`);
@@ -293,66 +294,68 @@ export const run = async (config: Config, testEnv: TestEnvironment, logger: Logg
       }
     }
 
-    const ROLE_QUESTION = `
-Select a role:
-  1. Issuer (issuing organization - deploy and enroll credentials)
-  2. Participant (check in with a card)
-  3. Exit
-Which are you? `;
+    while (true) {
+      const ROLE_QUESTION = `
+  Select a role:
+    1. Issuer (issuing organization - deploy and enroll credentials)
+    2. Participant (check in with a card)
+    3. Exit
+  Which are you? `;
 
-    const role = await rli.question(ROLE_QUESTION);
-    if (role === '3') {
-      logger.info('Exiting...');
-      return;
-    }
-    if (role !== '1' && role !== '2') {
-      logger.error(`Invalid choice: ${role}`);
-      return;
-    }
-
-    const publicDataProvider = indexerPublicDataProvider(envConfiguration.indexer, envConfiguration.indexerWS);
-
-    if (role === '1') {
-      const zkConfigProvider = new NodeZkConfigProvider<'enroll'>(config.zkConfigPath);
-      const issuerSeed = await rli.question('Issuer secret key (hex, blank to generate a new one): ');
-      const issuerSecretKey =
-        issuerSeed.trim() === ''
-          ? randomBytes(32)
-          : Uint8Array.from(Buffer.from(issuerSeed.trim().replace(/^0x/, ''), 'hex'));
-      if (issuerSecretKey.length !== 32) {
-        logger.error('Issuer secret key must be 32 bytes of hex.');
-        return;
+      const role = await rli.question(ROLE_QUESTION);
+      if (role === '3') {
+        logger.info('Exiting...');
+        break;
       }
-      if (issuerSeed.trim() === '') {
-        logger.info(`Generated issuer secret key (SAVE THIS - required to enroll again): ${toHex(issuerSecretKey)}`);
+      if (role !== '1' && role !== '2') {
+        logger.error(`Invalid choice: ${role}`);
+        continue;
       }
-      const providers: IssuerProviders = {
-        privateStateProvider: levelPrivateStateProvider<typeof issuerPrivateStateKey, IssuerPrivateState>({
-          privateStateStoreName: `${config.privateStateStoreName}-issuer`,
-          signingKeyStoreName: `${config.privateStateStoreName}-issuer-signing-keys`,
-          privateStoragePasswordProvider: () => {
-            return 'Mano-Issuer-2026!';
-          },
-          accountId: seed,
-        }),
-        publicDataProvider,
-        zkConfigProvider,
-        proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
-        walletProvider,
-        midnightProvider: walletProvider,
-      };
-      await issuerLoop(providers, issuerSecretKey, rli, logger);
-    } else {
-      const zkConfigProvider = new NodeZkConfigProvider<'checkIn' | 'verifyCredential'>(config.zkConfigPath);
-      const providers: ParticipantProviders = {
-        privateStateProvider: new EphemeralPrivateStateProvider<typeof participantPrivateStateKey, ParticipantPrivateState>(),
-        publicDataProvider,
-        zkConfigProvider,
-        proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
-        walletProvider,
-        midnightProvider: walletProvider,
-      };
-      await participantLoop(providers, rli, logger);
+
+      const publicDataProvider = indexerPublicDataProvider(envConfiguration.indexer, envConfiguration.indexerWS);
+
+      if (role === '1') {
+        const zkConfigProvider = new NodeZkConfigProvider<'enroll'>(config.zkConfigPath);
+        const issuerSeed = await rli.question('Issuer secret key (hex, blank to generate a new one): ');
+        const issuerSecretKey =
+          issuerSeed.trim() === ''
+            ? randomBytes(32)
+            : Uint8Array.from(Buffer.from(issuerSeed.trim().replace(/^0x/, ''), 'hex'));
+        if (issuerSecretKey.length !== 32) {
+          logger.error('Issuer secret key must be 32 bytes of hex.');
+          continue;
+        }
+        if (issuerSeed.trim() === '') {
+          logger.info(`Generated issuer secret key (SAVE THIS - required to enroll again): ${toHex(issuerSecretKey)}`);
+        }
+        const providers: IssuerProviders = {
+          privateStateProvider: levelPrivateStateProvider<typeof issuerPrivateStateKey, IssuerPrivateState>({
+            privateStateStoreName: `${config.privateStateStoreName}-issuer`,
+            signingKeyStoreName: `${config.privateStateStoreName}-issuer-signing-keys`,
+            privateStoragePasswordProvider: () => {
+              return 'Mano-Issuer-2026!';
+            },
+            accountId: seed,
+          }),
+          publicDataProvider,
+          zkConfigProvider,
+          proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
+          walletProvider,
+          midnightProvider: walletProvider,
+        };
+        await issuerLoop(providers, issuerSecretKey, rli, logger);
+      } else {
+        const zkConfigProvider = new NodeZkConfigProvider<'checkIn' | 'verifyCredential'>(config.zkConfigPath);
+        const providers: ParticipantProviders = {
+          privateStateProvider: new EphemeralPrivateStateProvider<typeof participantPrivateStateKey, ParticipantPrivateState>(),
+          publicDataProvider,
+          zkConfigProvider,
+          proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
+          walletProvider,
+          midnightProvider: walletProvider,
+        };
+        await participantLoop(providers, rli, logger);
+      }
     }
   } catch (e) {
     logError(logger, e);

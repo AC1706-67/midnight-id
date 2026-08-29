@@ -84,30 +84,35 @@ export class ManoParticipantAPI {
    */
   async checkIn(currentDate: Uint8Array): Promise<void> {
     this.logger?.info('checkingIn');
-    try {
-      await this.refreshPath();
-      const txData = await this.deployedContract.callTx.checkIn(currentDate);
-      this.logger?.trace({ transactionAdded: { circuit: 'checkIn', txHash: txData.public.txHash, blockHeight: txData.public.blockHeight } });
-    } finally {
-      await this.providers.privateStateProvider.clear();
-    }
+    await this.refreshPath();
+    const txData = await this.deployedContract.callTx.checkIn(currentDate);
+    this.logger?.trace({ transactionAdded: { circuit: 'checkIn', txHash: txData.public.txHash, blockHeight: txData.public.blockHeight } });
   }
 
   /**
    * Proves the participant holds a valid enrolled credential, without
    * revealing which one. Used by a verifier at the point of service.
    *
-   * Same secret handling as checkIn: path fetched fresh, private state
-   * cleared afterwards regardless of outcome.
+   * Same secret handling as checkIn: path fetched fresh from current
+   * ledger state. The session secret is dropped by close(), not here.
    */
   async verifyCredential(): Promise<void> {
     this.logger?.info('verifyingCredential');
-    try {
-      await this.refreshPath();
-      const txData = await this.deployedContract.callTx.verifyCredential();
-      this.logger?.trace({ transactionAdded: { circuit: 'verifyCredential', txHash: txData.public.txHash, blockHeight: txData.public.blockHeight } });
-    } finally {
-      await this.providers.privateStateProvider.clear();
-    }
+    await this.refreshPath();
+    const txData = await this.deployedContract.callTx.verifyCredential();
+    this.logger?.trace({ transactionAdded: { circuit: 'verifyCredential', txHash: txData.public.txHash, blockHeight: txData.public.blockHeight } });
+  }
+
+  /**
+   * Ends the participant session and discards the secret key.
+   *
+   * The card secret is held in memory for the duration of a session - a
+   * participant at the kiosk may check in and then prove a credential -
+   * and is dropped when they walk away. It never reaches disk regardless,
+   * because the provider is in-memory only.
+   */
+  async close(): Promise<void> {
+    await this.providers.privateStateProvider.clear();
+    this.logger?.info('participant session closed');
   }
 }
