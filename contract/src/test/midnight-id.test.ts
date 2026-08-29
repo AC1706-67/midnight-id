@@ -145,3 +145,54 @@ describe("Midnight ID", () => {
     expect(() => sim.verifyCredential()).toThrow();
   });
 });
+
+/**
+ * KNOWN VULNERABILITY - `enroll` is unauthenticated.
+ *
+ * This block documents a defect that is still present in the contract. It
+ * asserts the BROKEN behaviour on purpose, so it PASSES while the hole is
+ * open and FAILS the moment `enroll` gains an authorization check.
+ *
+ * A failure here is good news: it means enroll is now authorized. When that
+ * happens, replace these assertions with their inverse (the stranger's
+ * `enroll` call should throw) rather than deleting the coverage.
+ *
+ * Tracked as Known repo issue 3 in CLAUDE.md.
+ */
+describe("KNOWN VULNERABILITY: unauthenticated enroll", () => {
+  it("VULN (expected to pass until fixed): a stranger can self-enroll and then check in with the self-issued credential", () => {
+    // The org legitimately enrolls a participant. Leaf 0 is honest.
+    const sim = new MidnightIdSimulator(aliceSk);
+    sim.enroll(sim.commitmentFor(aliceSk));
+
+    // A stranger picks their own secret and derives the matching commitment.
+    // `publicCommitment` is a pure circuit, so this needs nothing from the org
+    // - no issuer key, no enrollment session, no staff involvement.
+    const strangerCommitment = sim.commitmentFor(strangerSk);
+
+    // The hole: enroll takes only a commitment and checks nothing about the
+    // caller, so the stranger writes their own leaf straight into the tree.
+    expect(() => sim.enroll(strangerCommitment)).not.toThrow();
+
+    const ledgerAfterEnroll = sim.getLedger();
+    expect(ledgerAfterEnroll.enrollmentCount).toEqual(2n);
+
+    // The self-issued credential is now indistinguishable from a real one:
+    // it sits in credentialTree and produces a valid Merkle path.
+    const strangerPath = sim.pathFor(1n, strangerCommitment);
+    sim.switchUser({
+      secretKey: strangerSk,
+      leafIndex: 1n,
+      currentPath: strangerPath,
+    });
+
+    // And it checks in successfully, burning a nullifier and inflating the
+    // service's check-in count.
+    const ledger = sim.checkIn(DAY_1);
+    expect(ledger.totalCheckIns).toEqual(1n);
+
+    // verifyCredential accepts it too - a third party would be told this
+    // stranger holds a valid credential.
+    expect(() => sim.verifyCredential()).not.toThrow();
+  });
+});
