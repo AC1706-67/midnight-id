@@ -58,4 +58,36 @@ export class ManoIssuerAPI {
       },
     });
   }
+
+  /**
+   * Deploys a new credential contract. The issuer public key is pinned in
+   * the constructor from the issuer secret key, so only the holder of that
+   * key can enroll against this deployment.
+   */
+  static async deploy(providers: IssuerProviders, issuerSecretKey: Uint8Array, logger?: Logger): Promise<ManoIssuerAPI> {
+    logger?.info('deployContract');
+    const issuerPk = Mano.pureCircuits.publicIssuerPk(issuerSecretKey);
+    const deployed = await deployContract(providers, {
+      compiledContract: IssuerCompiledContract,
+      privateStateId: issuerPrivateStateKey,
+      initialPrivateState: createIssuerPrivateState(issuerSecretKey),
+      args: [issuerPk],
+    });
+    logger?.trace({ contractDeployed: { finalizedDeployTxData: deployed.deployTxData.public } });
+    return new ManoIssuerAPI(deployed, providers, logger);
+  }
+
+  /** Joins an already deployed credential contract as the issuer. */
+  static async join(providers: IssuerProviders, contractAddress: ContractAddress, issuerSecretKey: Uint8Array, logger?: Logger): Promise<ManoIssuerAPI> {
+    logger?.info({ joinContract: { contractAddress } });
+    providers.privateStateProvider.setContractAddress(contractAddress);
+    const found = await findDeployedContract<IssuerContract>(providers, {
+      contractAddress,
+      compiledContract: IssuerCompiledContract,
+      privateStateId: issuerPrivateStateKey,
+      initialPrivateState: createIssuerPrivateState(issuerSecretKey),
+    });
+    logger?.trace({ contractJoined: { finalizedDeployTxData: found.deployTxData.public } });
+    return new ManoIssuerAPI(found, providers, logger);
+  }
 }

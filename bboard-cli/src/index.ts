@@ -25,15 +25,20 @@ import { createInterface, type Interface } from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
 import { WebSocket } from 'ws';
 import {
-  BBoardAPI,
-  type BBoardDerivedState,
-  bboardPrivateStateKey,
-  type BBoardProviders,
-  type DeployedBBoardContract,
-  type PrivateStateId,
+  ManoIssuerAPI,
+  ManoParticipantAPI,
+  EphemeralPrivateStateProvider,
+  createIssuerPrivateState,
+  deriveManoPublicState,
+  issuerPrivateStateKey,
+  participantPrivateStateKey,
+  type IssuerProviders,
+  type ParticipantProviders,
+  type IssuerPrivateState,
+  type ParticipantPrivateState,
 } from '../../api/src/index';
 import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
-import { ledger, type Ledger, State } from '../../contract/src/managed/bboard/contract/index.js';
+import { ledger, type Ledger, pureCircuits } from '../../contract/src/managed/bboard/contract/index.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
@@ -48,7 +53,6 @@ import { randomBytes } from '../../api/src/utils';
 import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 import { syncWallet, waitForUnshieldedFunds } from './wallet-utils';
 import { generateDust } from './generate-dust';
-import { BBoardPrivateState } from '../../contract/src/witnesses.js';
 
 // @ts-expect-error: It's needed to enable WebSocket usage through apollo
 globalThis.WebSocket = WebSocket;
@@ -62,174 +66,152 @@ globalThis.WebSocket = WebSocket;
  * in the bulletin board contract.
  */
 
-export const getBBoardLedgerState = async (
-  providers: BBoardProviders,
+export const getManoLedgerState = async (
+  publicDataProvider: IssuerProviders['publicDataProvider'] | ParticipantProviders['publicDataProvider'],
   contractAddress: ContractAddress,
 ): Promise<Ledger | null> => {
   assertIsContractAddress(contractAddress);
-  const contractState = await providers.publicDataProvider.queryContractState(contractAddress);
+  const contractState = await publicDataProvider.queryContractState(contractAddress);
   return contractState != null ? ledger(contractState.data) : null;
 };
-// providers.publicDataProvider
-//   .queryContractState(contractAddress)
-//   .then((contractState) => (contractState != null ? ledger(contractState.data) : null));
+
+const displayLedgerState = async (
+  publicDataProvider: IssuerProviders['publicDataProvider'] | ParticipantProviders['publicDataProvider'],
+  contractAddress: ContractAddress,
+  logger: Logger,
+): Promise<void> => {
+  const ledgerState = await getManoLedgerState(publicDataProvider, contractAddress);
+  if (ledgerState === null) {
+    logger.info(`No MANO contract deployed at ${contractAddress}`);
+    return;
+  }
+  const s = deriveManoPublicState(ledgerState);
+  logger.info(`Enrolled credentials: ${s.enrollmentCount}`);
+  logger.info(`Total check-ins: ${s.totalCheckIns}`);
+  logger.info(`Nullifiers used: ${s.nullifierCount}`);
+  logger.info(`Issuer public key: ${toHex(s.issuerPk)}`);
+  logger.info(`Credential tree full: ${s.treeIsFull}`);
+};
 
 /* **********************************************************************
- * deployOrJoin: returns a contract, by prompting the user about
- * whether to deploy a new one or join an existing one and then
- * calling the appropriate helper.
+ * Issuer mode. Deploys the contract and enrolls participant credentials.
+ * The participant secret key is generated here, shown once so it can be
+ * written to a card, and then discarded. It is never stored.
  */
 
-const DEPLOY_OR_JOIN_QUESTION = `
-You can do one of the following:
-  1. Deploy a new bulletin board contract
-  2. Join an existing bulletin board contract
+const ISSUER_MENU = `
+Issuer mode:
+  1. Deploy a new MANO credential contract
+  2. Join an existing MANO contract
   3. Exit
 Which would you like to do? `;
 
-const deployOrJoin = async (providers: BBoardProviders, rli: Interface, logger: Logger): Promise<BBoardAPI | null> => {
-  let api: BBoardAPI | null = null;
+const ISSUER_LOOP = `
+Issuer mode:
+  1. Enroll a new participant credential
+  2. Display the current ledger state
+  3. Exit
+Which would you like to do? `;
 
-  while (true) {
-    const choice = await rli.question(DEPLOY_OR_JOIN_QUESTION);
+const issuerLoop = async (providers: IssuerProviders, issuerSecretKey: Uint8Array, rli: Interface, logger: Logger): Promise<void> => {
+  let api: ManoIssuerAPI | null = null;
+  while (api === null) {
+    const choice = await rli.question(ISSUER_MENU);
     switch (choice) {
       case '1':
-        api = await BBoardAPI.deploy(providers, logger);
+        api = await ManoIssuerAPI.deploy(providers, issuerSecretKey, logger);
         logger.info(`Deployed contract at address: ${api.deployedContractAddress}`);
-        return api;
+        break;
       case '2':
-        api = await BBoardAPI.join(providers, await rli.question('What is the contract address (in hex)? '), logger);
+        api = await ManoIssuerAPI.join(providers, await rli.question('Contract address (hex)? '), issuerSecretKey, logger);
         logger.info(`Joined contract at address: ${api.deployedContractAddress}`);
-        return api;
+        break;
       case '3':
-        logger.info('Exiting...');
-        return null;
+        return;
       default:
         logger.error(`Invalid choice: ${choice}`);
     }
   }
-};
-
-/* **********************************************************************
- * displayLedgerState: shows the values of each of the fields declared
- * by the contract to be in the ledger state of the bulletin board.
- */
-
-const displayLedgerState = async (
-  providers: BBoardProviders,
-  deployedBBoardContract: DeployedBBoardContract,
-  logger: Logger,
-): Promise<void> => {
-  const contractAddress = deployedBBoardContract.deployTxData.public.contractAddress;
-  const ledgerState = await getBBoardLedgerState(providers, contractAddress);
-  if (ledgerState === null) {
-    logger.info(`There is no bulletin board contract deployed at ${contractAddress}`);
-  } else {
-    const boardState = ledgerState.state === State.OCCUPIED ? 'occupied' : 'vacant';
-    const latestMessage = !ledgerState.message.is_some ? 'none' : ledgerState.message.value;
-    logger.info(`Current state is: '${boardState}'`);
-    logger.info(`Current message is: '${latestMessage}'`);
-    logger.info(`Current sequence is: ${ledgerState.sequence}`);
-    logger.info(`Current owner is: '${toHex(ledgerState.owner)}'`);
+  const issuer: ManoIssuerAPI = api;
+  while (true) {
+    const choice = await rli.question(ISSUER_LOOP);
+    try {
+      switch (choice) {
+        case '1': {
+          const sk = randomBytes(32);
+          const commitment = pureCircuits.publicCommitment(sk);
+          await issuer.enroll(commitment);
+          logger.info('Credential enrolled.');
+          logger.info(`CARD SECRET (write to card, not stored anywhere): ${toHex(sk)}`);
+          break;
+        }
+        case '2':
+          await displayLedgerState(providers.publicDataProvider, issuer.deployedContractAddress, logger);
+          break;
+        case '3':
+          logger.info('Exiting...');
+          return;
+        default:
+          logger.error(`Invalid choice: ${choice}`);
+      }
+    } catch (e) {
+      logError(logger, e);
+      logger.info('Returning to menu...');
+    }
   }
 };
 
 /* **********************************************************************
- * displayPrivateState: shows the hex-formatted value of the secret key.
+ * Participant mode. Joins an existing contract with a secret key read
+ * from a card. The key is held in memory only and cleared after each
+ * proof.
  */
 
-const displayPrivateState = async (providers: BBoardProviders, logger: Logger): Promise<void> => {
-  const privateState = await providers.privateStateProvider.get(bboardPrivateStateKey);
-  if (privateState === null) {
-    logger.info(`There is no existing bulletin board private state`);
-  } else {
-    logger.info(`Current secret key is: ${toHex(privateState.secretKey)}`);
-  }
-};
-
-/* **********************************************************************
- * displayDerivedState: shows the values of derived state which is made
- * by combining the ledger state with private state. In this example, the
- * derived state compares the owner's key with the private secret key to
- * determine if the current user is the owner of the current message.
- */
-
-const displayDerivedState = (ledgerState: BBoardDerivedState | undefined, logger: Logger) => {
-  if (ledgerState === undefined) {
-    logger.info(`No bulletin board state currently available`);
-  } else {
-    const boardState = ledgerState.state === State.OCCUPIED ? 'occupied' : 'vacant';
-    const latestMessage = ledgerState.state === State.OCCUPIED ? ledgerState.message : 'none';
-    logger.info(`Current state is: '${boardState}'`);
-    logger.info(`Current message is: '${latestMessage}'`);
-    logger.info(`Current sequence is: ${ledgerState.sequence}`);
-    logger.info(`Current owner is: '${ledgerState.isOwner ? 'you' : 'not you'}'`);
-  }
-};
-
-/* **********************************************************************
- * mainLoop: the main interactive menu of the bulletin board CLI.
- * Before starting the loop, the user is prompted to deploy a new
- * contract or join an existing one.
- */
-
-const MAIN_LOOP_QUESTION = `
-You can do one of the following:
-  1. Post a message
-  2. Take down your message
-  3. Display the current ledger state (known by everyone)
-  4. Display the current private state (known only to this DApp instance)
-  5. Display the current derived state (known only to this DApp instance)
-  6. Exit
+const PARTICIPANT_LOOP = `
+Participant mode:
+  1. Check in for today
+  2. Verify credential
+  3. Display the current ledger state
+  4. Exit
 Which would you like to do? `;
 
-const mainLoop = async (providers: BBoardProviders, rli: Interface, logger: Logger): Promise<void> => {
-  const bboardApi = await deployOrJoin(providers, rli, logger);
-  if (bboardApi === null) {
+const participantLoop = async (providers: ParticipantProviders, rli: Interface, logger: Logger): Promise<void> => {
+  const address = await rli.question('Contract address (hex)? ');
+  const cardSecret = await rli.question('Card secret (hex)? ');
+  const sk = Uint8Array.from(Buffer.from(cardSecret.replace(/^0x/, ''), 'hex'));
+  if (sk.length !== 32) {
+    logger.error('Card secret must be 32 bytes of hex.');
     return;
   }
-  let currentState: BBoardDerivedState | undefined;
-  const stateObserver = {
-    next: (state: BBoardDerivedState) => (currentState = state),
-  };
-  const subscription = bboardApi.state$.subscribe(stateObserver);
-  try {
-    while (true) {
-      const choice = await rli.question(MAIN_LOOP_QUESTION);
-      try {
-        switch (choice) {
-          case '1': {
-            const message = await rli.question(`What message do you want to post? `);
-            await bboardApi.post(message);
-            break;
-          }
-          case '2':
-            await bboardApi.takeDown();
-            break;
-          case '3':
-            await displayLedgerState(providers, bboardApi.deployedContract, logger);
-            break;
-          case '4':
-            await displayPrivateState(providers, logger);
-            break;
-          case '5':
-            displayDerivedState(currentState, logger);
-            break;
-          case '6':
-            logger.info('Exiting...');
-            return;
-          default:
-            logger.error(`Invalid choice: ${choice}`);
+  const api = await ManoParticipantAPI.join(providers, address, sk, logger);
+  logger.info(`Joined contract at address: ${api.deployedContractAddress}`);
+  while (true) {
+    const choice = await rli.question(PARTICIPANT_LOOP);
+    try {
+      switch (choice) {
+        case '1': {
+          const today = new TextEncoder().encode(new Date().toISOString().slice(0, 10).padEnd(32, '\0'));
+          await api.checkIn(today.slice(0, 32));
+          logger.info('Checked in.');
+          break;
         }
-      } catch (e) {
-        logError(logger, e);
-        logger.info('Returning to main menu...');
+        case '2':
+          await api.verifyCredential();
+          logger.info('Credential verified.');
+          break;
+        case '3':
+          await displayLedgerState(providers.publicDataProvider, api.deployedContractAddress, logger);
+          break;
+        case '4':
+          logger.info('Exiting...');
+          return;
+        default:
+          logger.error(`Invalid choice: ${choice}`);
       }
+    } catch (e) {
+      logError(logger, e);
+      logger.info('Returning to menu...');
     }
-  } finally {
-    // While we allow errors to bubble up to the 'run' function, we will always need to dispose of the state
-    // subscription when we exit.
-    subscription.unsubscribe();
   }
 };
 
@@ -311,23 +293,67 @@ export const run = async (config: Config, testEnv: TestEnvironment, logger: Logg
       }
     }
 
-    const zkConfigProvider = new NodeZkConfigProvider<'post' | 'takeDown'>(config.zkConfigPath);
-    const providers: BBoardProviders = {
-      privateStateProvider: levelPrivateStateProvider<PrivateStateId, BBoardPrivateState>({
-        privateStateStoreName: config.privateStateStoreName,
-        signingKeyStoreName: `${config.privateStateStoreName}-signing-keys`,
-        privateStoragePasswordProvider: () => {
-          return 'Bboard-Test-2026!';
-        },
-        accountId: seed,
-      }),
-      publicDataProvider: indexerPublicDataProvider(envConfiguration.indexer, envConfiguration.indexerWS),
-      zkConfigProvider: zkConfigProvider,
-      proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
-      walletProvider: walletProvider,
-      midnightProvider: walletProvider,
-    };
-    await mainLoop(providers, rli, logger);
+    const ROLE_QUESTION = `
+Select a role:
+  1. Issuer (issuing organization - deploy and enroll credentials)
+  2. Participant (check in with a card)
+  3. Exit
+Which are you? `;
+
+    const role = await rli.question(ROLE_QUESTION);
+    if (role === '3') {
+      logger.info('Exiting...');
+      return;
+    }
+    if (role !== '1' && role !== '2') {
+      logger.error(`Invalid choice: ${role}`);
+      return;
+    }
+
+    const publicDataProvider = indexerPublicDataProvider(envConfiguration.indexer, envConfiguration.indexerWS);
+
+    if (role === '1') {
+      const zkConfigProvider = new NodeZkConfigProvider<'enroll'>(config.zkConfigPath);
+      const issuerSeed = await rli.question('Issuer secret key (hex, blank to generate a new one): ');
+      const issuerSecretKey =
+        issuerSeed.trim() === ''
+          ? randomBytes(32)
+          : Uint8Array.from(Buffer.from(issuerSeed.trim().replace(/^0x/, ''), 'hex'));
+      if (issuerSecretKey.length !== 32) {
+        logger.error('Issuer secret key must be 32 bytes of hex.');
+        return;
+      }
+      if (issuerSeed.trim() === '') {
+        logger.info(`Generated issuer secret key (SAVE THIS - required to enroll again): ${toHex(issuerSecretKey)}`);
+      }
+      const providers: IssuerProviders = {
+        privateStateProvider: levelPrivateStateProvider<typeof issuerPrivateStateKey, IssuerPrivateState>({
+          privateStateStoreName: `${config.privateStateStoreName}-issuer`,
+          signingKeyStoreName: `${config.privateStateStoreName}-issuer-signing-keys`,
+          privateStoragePasswordProvider: () => {
+            return 'Mano-Issuer-2026!';
+          },
+          accountId: seed,
+        }),
+        publicDataProvider,
+        zkConfigProvider,
+        proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
+        walletProvider,
+        midnightProvider: walletProvider,
+      };
+      await issuerLoop(providers, issuerSecretKey, rli, logger);
+    } else {
+      const zkConfigProvider = new NodeZkConfigProvider<'checkIn' | 'verifyCredential'>(config.zkConfigPath);
+      const providers: ParticipantProviders = {
+        privateStateProvider: new EphemeralPrivateStateProvider<typeof participantPrivateStateKey, ParticipantPrivateState>(),
+        publicDataProvider,
+        zkConfigProvider,
+        proofProvider: httpClientProofProvider(envConfiguration.proofServer, zkConfigProvider),
+        walletProvider,
+        midnightProvider: walletProvider,
+      };
+      await participantLoop(providers, rli, logger);
+    }
   } catch (e) {
     logError(logger, e);
     logger.info('Exiting...');
