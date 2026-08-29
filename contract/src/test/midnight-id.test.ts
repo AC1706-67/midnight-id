@@ -21,6 +21,7 @@ const DAY_2 = textBytes32("2026-07-18");
 const aliceSk = textBytes32("alice-secret-key");
 const bobSk = textBytes32("bob-secret-key");
 const strangerSk = textBytes32("stranger-secret-key");
+const forgedIssuerSk = textBytes32("forged-issuer-key");
 
 // --- tests -----------------------------------------------------------
 
@@ -147,52 +148,78 @@ describe("Midnight ID", () => {
 });
 
 /**
- * KNOWN VULNERABILITY - `enroll` is unauthenticated.
+ * REGRESSION - `enroll` is authorized.
  *
- * This block documents a defect that is still present in the contract. It
- * asserts the BROKEN behaviour on purpose, so it PASSES while the hole is
- * open and FAILS the moment `enroll` gains an authorization check.
+ * `enroll` used to take only a commitment and check nothing whatsoever about
+ * the caller, so anyone could write their own leaf into `credentialTree` and
+ * self-issue a credential that then passed `checkIn` and `verifyCredential`.
  *
- * A failure here is good news: it means enroll is now authorized. When that
- * happens, replace these assertions with their inverse (the stranger's
- * `enroll` call should throw) rather than deleting the coverage.
+ * It now asserts that the caller can produce the preimage of the sealed
+ * `issuerPk` fixed at deployment, proven in-circuit rather than trusted from
+ * the prover. These tests assert the FIXED behaviour: a caller who does not
+ * hold the issuer secret key cannot enroll, and a rejected enroll leaves the
+ * tree untouched, so no self-issued credential ever exists to check in with.
  *
- * Tracked as Known repo issue 3 in CLAUDE.md.
+ * A failure here means enroll has lost its authorization check.
+ *
+ * Tracked under Fixed in CLAUDE.md.
  */
-describe("KNOWN VULNERABILITY: unauthenticated enroll", () => {
-  it("VULN (expected to pass until fixed): a stranger can self-enroll and then check in with the self-issued credential", () => {
+describe("regression: enroll is authorized", () => {
+  it("rejects enroll from a caller holding no issuer secret key", () => {
     // The org legitimately enrolls a participant. Leaf 0 is honest.
     const sim = new MidnightIdSimulator(aliceSk);
     sim.enroll(sim.commitmentFor(aliceSk));
 
     // A stranger picks their own secret and derives the matching commitment.
-    // `publicCommitment` is a pure circuit, so this needs nothing from the org
-    // - no issuer key, no enrollment session, no staff involvement.
+    // `publicCommitment` is a pure circuit, so this still needs nothing from
+    // the org - that part was never the defence.
     const strangerCommitment = sim.commitmentFor(strangerSk);
 
-    // The hole: enroll takes only a commitment and checks nothing about the
-    // caller, so the stranger writes their own leaf straight into the tree.
-    expect(() => sim.enroll(strangerCommitment)).not.toThrow();
-
-    const ledgerAfterEnroll = sim.getLedger();
-    expect(ledgerAfterEnroll.enrollmentCount).toEqual(2n);
-
-    // The self-issued credential is now indistinguishable from a real one:
-    // it sits in credentialTree and produces a valid Merkle path.
-    const strangerPath = sim.pathFor(1n, strangerCommitment);
+    // The stranger takes over the session BEFORE enrolling: they hold their
+    // own credential secret, but not the org's issuing key. `switchUser`
+    // drops `issuerSecretKey` unless it is passed explicitly.
     sim.switchUser({
       secretKey: strangerSk,
-      leafIndex: 1n,
-      currentPath: strangerPath,
+      leafIndex: null,
+      currentPath: null,
     });
 
-    // And it checks in successfully, burning a nullifier and inflating the
-    // service's check-in count.
-    const ledger = sim.checkIn(DAY_1);
-    expect(ledger.totalCheckIns).toEqual(1n);
+    expect(() => sim.enroll(strangerCommitment)).toThrow();
 
-    // verifyCredential accepts it too - a third party would be told this
-    // stranger holds a valid credential.
-    expect(() => sim.verifyCredential()).not.toThrow();
+    // The tree is untouched - the stranger's leaf never landed.
+    expect(sim.getLedger().enrollmentCount).toEqual(1n);
+    expect(
+      sim.getLedger().credentialTree.findPathForLeaf(strangerCommitment),
+    ).toBeUndefined();
+  });
+
+  it("rejects enroll from a caller holding the wrong issuer secret key", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    sim.enroll(sim.commitmentFor(aliceSk));
+
+    const strangerCommitment = sim.commitmentFor(strangerSk);
+
+    // Supplying *some* issuer key gets past the witness and reaches the
+    // in-circuit assert, which is where the real check lives.
+    sim.switchUser({
+      secretKey: strangerSk,
+      leafIndex: null,
+      currentPath: null,
+      issuerSecretKey: forgedIssuerSk,
+    });
+
+    expect(() => sim.enroll(strangerCommitment)).toThrow(/not the issuer/);
+
+    expect(sim.getLedger().enrollmentCount).toEqual(1n);
+    expect(
+      sim.getLedger().credentialTree.findPathForLeaf(strangerCommitment),
+    ).toBeUndefined();
+  });
+
+  it("still lets the issuing organization enroll", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    sim.enroll(sim.commitmentFor(aliceSk));
+    sim.enroll(sim.commitmentFor(bobSk));
+    expect(sim.getLedger().enrollmentCount).toEqual(2n);
   });
 });

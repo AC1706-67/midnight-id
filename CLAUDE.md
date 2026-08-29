@@ -35,7 +35,31 @@ This repo will be submitted publicly. No organization name, address, or leadersh
 
 1. Packaging is still upstream example-bboard: root package name, `bboard-cli` / `bboard-ui` / `bboard-contract` workspaces, `bboard.compact` filename, and inherited CODEOWNERS / CHANGELOG / SECURITY.md. Judges authored the original. Needs renaming.
 2. `contract/src/managed/` and `contract/dist/` contain committed prover and verifier keys and build output. Should be gitignored.
-3. RESOLVED — `enroll` is unauthenticated. It has no caller check of any kind, so anyone can insert an arbitrary commitment into `credentialTree` and self-enroll a credential that then passes `checkIn` and `verifyCredential`. Fix: a `sealed ledger issuerPk: Bytes<32>` set in the `constructor` (needs `disclose()`), an `issuerSk()` witness, and `assert(persistentHash(...issuerSk()) == issuerPk)` at the top of `enroll`. Note `ownPublicKey()` is prover-supplied and must not be used for this.
+3. `api/` and `bboard-cli/` are still written against the upstream bulletin board and do not typecheck. They now also need an **issuer / participant role split**: `enroll` requires `issuerSecretKey` in private state, which a participant install must not hold. This settles the open question of whether to migrate them against the pre- or post-authorization contract — the contract is authorized now, so they migrate against three witnesses, not two.
+
+## Fixed
+
+- **`enroll` authorization** (was Known repo issue 3). `enroll` had no caller check of any
+  kind, so anyone could insert an arbitrary commitment into `credentialTree` and self-enroll
+  a credential that then passed `checkIn` and `verifyCredential`. Shipped:
+  - `export sealed ledger issuerPk: Bytes<32>`, set from a `constructor(pk: Bytes<32>)`
+    parameter via `disclose()`. Sealed, so issuance cannot be moved to another key after
+    deployment.
+  - `witness issuerSk(): Bytes<32>`, held only by the issuing organization.
+    `MidnightIdPrivateState.issuerSecretKey` is `null` on a participant install and the
+    witness throws there, so `enroll` fails locally before a proof is attempted.
+  - `assert(disclose(publicIssuerPk(issuerSk()) == issuerPk), "not the issuer")` at the top
+    of `enroll`. `ownPublicKey()` is prover-supplied and is deliberately not used.
+  - `export pure circuit publicIssuerPk(sk)` — issuer key derivation, own domain tag
+    (`midnight-id:issuer`) so an issuer key can never collide with a credential leaf.
+  - `export pure circuit publicNullifier(sk, date)` — `checkIn` calls it rather than
+    inlining the hash, so the app and the circuit cannot drift apart. `checkIn` and
+    `verifyCredential` both call `publicCommitment` for the same reason - every hash
+    derivation in the contract now has exactly one definition.
+
+  Enforced in-circuit, not just in TypeScript: `enroll.zkir` carries `persistent_hash`,
+  `private_input`, `test_eq` and `assert` ops that the old circuit did not have. Covered by
+  the `regression: enroll is authorized` block in `contract/src/test/midnight-id.test.ts`.
 
 ## Open technical questions — do not fix yet, investigate only when asked
 

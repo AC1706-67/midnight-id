@@ -8,23 +8,62 @@ export ledger usedNullifiers: Set<Bytes<32>>;
 export ledger enrollmentCount: Counter;
 export ledger totalCheckIns: Counter;
 
+// The issuing organization's public key. Sealed: fixed at deployment,
+// so nothing after construction can move issuance to another key.
+export sealed ledger issuerPk: Bytes<32>;
+
 // ---------- Private witnesses ----------
 witness localSecretKey(): Bytes<32>;
 witness credentialPath(): MerkleTreePath<10, Bytes<32>>;
 
-// ---------- Circuits ----------
+// Held only by the issuing organization. A participant's device has no
+// value to return here, so enroll is unusable from a participant install.
+witness issuerSk(): Bytes<32>;
 
-// Pure helper: compute the credential commitment for a secret key.
-// Exported so the app and tests derive commitments identically to the circuits.
+// ---------- Pure helpers ----------
+// Exported so the app and tests derive these values identically to the
+// circuits, instead of re-implementing the hashes in TypeScript.
+
+// Credential commitment for a secret key.
 export pure circuit publicCommitment(sk: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<2, Bytes<32>>>(
     [pad(32, "midnight-id:commitment"), sk]
   );
 }
 
+// Daily nullifier for a secret key. checkIn calls this, so the two
+// derivations cannot drift apart.
+export pure circuit publicNullifier(sk: Bytes<32>, date: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "midnight-id:nullifier"), sk, date]
+  );
+}
+
+// Issuer public key for an issuer secret key. Separate domain tag from
+// publicCommitment so an issuer key can never collide with a credential leaf.
+export pure circuit publicIssuerPk(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>(
+    [pad(32, "midnight-id:issuer"), sk]
+  );
+}
+
+// ---------- Constructor ----------
+// The deployer supplies the issuer public key. It is a constructor
+// parameter, so it is witness-tagged and needs disclose() to reach the ledger.
+constructor(pk: Bytes<32>) {
+  issuerPk = disclose(pk);
+}
+
+// ---------- Circuits ----------
+
 // Org-side: insert a credential commitment.
 // The tree insert never reveals the value - core privacy guarantee.
 export circuit enroll(commitment: Bytes<32>): [] {
+  // Only the holder of the issuer secret key may write a leaf. Without this,
+  // anyone could self-enroll a commitment that then passes checkIn and
+  // verifyCredential. Note ownPublicKey() is prover-supplied and would not
+  // work here; the issuer key must be proven by preimage.
+  assert(disclose(publicIssuerPk(issuerSk()) == issuerPk), "not the issuer");
   credentialTree.insert(disclose(commitment));
   enrollmentCount.increment(1);
 }
@@ -33,18 +72,14 @@ export circuit enroll(commitment: Bytes<32>): [] {
 // Nobody learns WHO checked in - only that a valid credential did.
 export circuit checkIn(currentDate: Bytes<32>): [] {
   const sk = localSecretKey();
-  const commitment = persistentHash<Vector<2, Bytes<32>>>(
-    [pad(32, "midnight-id:commitment"), sk]
-  );
+  const commitment = publicCommitment(sk);
   const path = credentialPath();
   assert(path.leaf == commitment, "path does not match credential");
   assert(
     credentialTree.checkRoot(disclose(merkleTreePathRoot<10, Bytes<32>>(path))),
     "not an enrolled credential"
   );
-  const nullifier = persistentHash<Vector<3, Bytes<32>>>(
-    [pad(32, "midnight-id:nullifier"), sk, currentDate]
-  );
+  const nullifier = publicNullifier(sk, currentDate);
   assert(!usedNullifiers.member(disclose(nullifier)), "already checked in today");
   usedNullifiers.insert(disclose(nullifier));
   totalCheckIns.increment(1);
@@ -54,9 +89,7 @@ export circuit checkIn(currentDate: Bytes<32>): [] {
 // without revealing which one, when it was issued, or any check-in history.
 export circuit verifyCredential(): [] {
   const sk = localSecretKey();
-  const commitment = persistentHash<Vector<2, Bytes<32>>>(
-    [pad(32, "midnight-id:commitment"), sk]
-  );
+  const commitment = publicCommitment(sk);
   const path = credentialPath();
   assert(path.leaf == commitment, "path does not match credential");
   assert(

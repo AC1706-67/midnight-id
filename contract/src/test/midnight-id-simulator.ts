@@ -3,6 +3,10 @@
  *
  * Exercises the contract in a local sandbox: enroll credentials,
  * check in with a daily nullifier, verify credentials as a third party.
+ *
+ * The simulator starts out holding the issuer secret key, i.e. it models
+ * the issuing organization's own device. `switchUser` models handing the
+ * session to somebody else and therefore drops the issuer key by default.
  */
 
 import {
@@ -16,6 +20,7 @@ import {
   Contract,
   type Ledger,
   ledger,
+  pureCircuits,
 } from "../managed/bboard/contract/index.js";
 import {
   type MidnightIdPrivateState,
@@ -23,21 +28,37 @@ import {
   witnesses,
 } from "../witnesses.js";
 
+// Default issuer identity for tests that do not care which key issues.
+const DEFAULT_ISSUER_SK = new Uint8Array(32).fill(7);
+
 export class MidnightIdSimulator {
   readonly contract: Contract<MidnightIdPrivateState>;
+  readonly issuerPk: Uint8Array;
   circuitContext: CircuitContext<MidnightIdPrivateState>;
 
-  constructor(secretKey: Uint8Array) {
+  constructor(
+    secretKey: Uint8Array,
+    issuerSecretKey: Uint8Array = DEFAULT_ISSUER_SK,
+  ) {
     this.contract = new Contract<MidnightIdPrivateState>(witnesses);
+    // Derived with the contract's own pure circuit, so it matches what
+    // enroll recomputes from issuerSk() at call time.
+    this.issuerPk = pureCircuits.publicIssuerPk(issuerSecretKey);
     const {
       currentPrivateState,
       currentContractState,
       currentZswapLocalState,
     } = this.contract.initialState(
       createConstructorContext(
-        { secretKey, leafIndex: null, currentPath: null },
+        {
+          secretKey,
+          leafIndex: null,
+          currentPath: null,
+          issuerSecretKey,
+        },
         "0".repeat(64),
       ),
+      this.issuerPk,
     );
     this.circuitContext = {
       currentPrivateState,
@@ -50,8 +71,21 @@ export class MidnightIdSimulator {
     };
   }
 
-  public switchUser(privateState: MidnightIdPrivateState) {
-    this.circuitContext.currentPrivateState = privateState;
+  // Become a different actor. `issuerSecretKey` defaults to null: an
+  // arbitrary person does not hold the org's issuing key, so enroll will
+  // fail for them. Pass it explicitly to model the org itself.
+  public switchUser(privateState: {
+    secretKey: Uint8Array;
+    leafIndex: bigint | null;
+    currentPath: CredentialMerklePath | null;
+    issuerSecretKey?: Uint8Array | null;
+  }) {
+    this.circuitContext.currentPrivateState = {
+      secretKey: privateState.secretKey,
+      leafIndex: privateState.leafIndex,
+      currentPath: privateState.currentPath,
+      issuerSecretKey: privateState.issuerSecretKey ?? null,
+    };
   }
 
   public getLedger(): Ledger {
@@ -68,6 +102,15 @@ export class MidnightIdSimulator {
     return this.contract.circuits.publicCommitment(
       this.circuitContext,
       secretKey,
+    ).result;
+  }
+
+  // Same, for the daily nullifier that checkIn burns.
+  public nullifierFor(secretKey: Uint8Array, date: Uint8Array): Uint8Array {
+    return this.contract.circuits.publicNullifier(
+      this.circuitContext,
+      secretKey,
+      date,
     ).result;
   }
 
