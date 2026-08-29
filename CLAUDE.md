@@ -35,7 +35,8 @@ This repo will be submitted publicly. No organization name, address, or leadersh
 
 1. Packaging is still upstream example-bboard: root package name, `bboard-cli` / `bboard-ui` / `bboard-contract` workspaces, `bboard.compact` filename, and inherited CODEOWNERS / CHANGELOG / SECURITY.md. Judges authored the original. Needs renaming.
 2. `contract/src/managed/` and `contract/dist/` contain committed prover and verifier keys and build output. Should be gitignored.
-3. `api/` and `bboard-cli/` are still written against the upstream bulletin board and do not typecheck. They now also need an **issuer / participant role split**: `enroll` requires `issuerSecretKey` in private state, which a participant install must not hold. This settles the open question of whether to migrate them against the pre- or post-authorization contract — the contract is authorized now, so they migrate against three witnesses, not two.
+3. `bboard-ui/` is still written against the upstream bulletin board and does not typecheck. Not in scope for Wave 1; the CLI is the demo surface.
+4. The issuer prints the participant card secret to the logger so it can be written onto a card during a demo. This conflicts with D6 (never log the participant secret key). Acceptable for a local demo, must not survive into anything pointed at a real log sink.
 
 ## Fixed
 
@@ -67,7 +68,45 @@ This repo will be submitted publicly. No organization name, address, or leadersh
 
 ## Verified sound — do not "fix"
 
+**Participant session model.** `checkIn` and `verifyCredential` deliberately do NOT clear
+private state after proving. The secret is established by `join()` and lives for the
+duration of a kiosk session — a participant may check in and then prove a credential — and
+is dropped by an explicit `close()` when they walk away. An earlier version cleared in a
+`finally` block per call; that destroyed the session secret and made every second operation
+fail with "no participant private state". Do not reintroduce per-call clearing. The secret
+never reaches disk regardless: `EphemeralPrivateStateProvider` is in-memory only and its
+export/import methods throw by design.
+
+**Role split (D1, settled).** Two private state types, not one union. `IssuerPrivateState`
+is persistent (LevelDB, own store name); `ParticipantPrivateState` is ephemeral. Cross-role
+witness stubs throw. Role is selected at CLI startup, before providers are built, because
+the two roles need different private state providers and differently-typed
+`NodeZkConfigProvider`s. The verifier role holds no private state and is deliberately not a
+CLI mode for Wave 1 — it needs no wallet, seed, or proof server, and `run()` builds the
+wallet first. `deriveManoPublicState` is exported for verifier use.
+
+**D3, settled.** `findPathForLeaf(commitment)` is used; leaf index is not tracked.
+
 `checkIn` correctly binds `credentialPath()` to `localSecretKey()` via `assert(path.leaf == commitment)`. Confirmed at the ZKIR wire level. Leave it alone.
+
+## Verified against a running chain
+
+Full flow exercised end to end on a local standalone environment (testkit provisions node,
+indexer, and proof server via Docker) with real PLONK proofs:
+
+| Operation | Time |
+|---|---|
+| deploy | ~19s |
+| enroll | ~23s |
+| checkIn | ~24s |
+| verifyCredential | ~22s |
+| second same-day checkIn | rejected in ~44ms |
+
+The rejection is the contract's own `already checked in today` assertion, failing locally
+before the proof server is invoked — no fees are spent on a rejected attempt.
+`verifyCredential` leaves `totalCheckIns` and the nullifier set unchanged.
+
+Not yet deployed to Preprod.
 
 ## Environment
 
