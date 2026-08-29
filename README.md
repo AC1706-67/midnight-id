@@ -1,157 +1,291 @@
-# Midnight ID 🌙
+# MANO — Anonymous Check-In Credentials
 
-**Portable anonymous credentials for community service organizations — built on Midnight.**
+A zero-knowledge credential system that lets someone prove they showed up, without
+revealing who they are.
 
-Built fresh during the MLH Midnight Hackathon (July 17–19, 2026).
+Built on Midnight with Compact. Submitted to the Midnight Buildathon, Wave 1.
 
-## The problem
-
-Community organizations — drop-in centers, peer recovery services, shelters, Naloxone distribution hubs — need to know that the person in front of them is enrolled, eligible, and showing up. But for the people they serve, being *on a list* can cost a job, housing, or custody. Federal privacy law (42 CFR Part 2) exists precisely because a substance-use service record is one of the most dangerous pieces of paper a person can have.
-
-Today organizations choose between two bad options: keep identifying records (a breach risk and a trust barrier), or keep nothing (and lose the ability to verify anything, report to funders, or help participants prove their own progress).
-
-## What Midnight ID does
-
-Midnight ID is a credential layer where **the organization vouches once, and the math takes over**:
-
-- **Enroll** — org staff issue a credential. Only a cryptographic commitment (a hash of a secret key) goes on-chain. The participant's alias never leaves the org's local device.
-- **Check In** — the participant proves they hold an enrolled credential via a zero-knowledge Merkle membership proof. A daily nullifier prevents double check-ins without ever linking check-ins to each other or to an identity.
-- **Verify** — a *different* organization can confirm "this person holds a valid credential" and learn nothing else. Not who they are, not where they enrolled, not when they attended.
-
-The public ledger sees only: commitments, burned nullifiers, and counters. **No names. No identities. Only proofs, hashes, and counts.**
-
-## Privacy properties
-
-| Hidden (always) | Disclosed (public) |
-|---|---|
-| Participant identity | Enrollment count |
-| Secret keys | Total check-in count |
-| Which credential checked in | Commitment hashes |
-| Check-in history per person | Daily nullifiers (unlinkable) |
-
-- **Domain separation**: commitment and nullifier hashes use distinct domain prefixes, so values can never be confused or cross-correlated.
-- **Daily nullifiers**: hash(sk, date) — the same person produces a different nullifier every day, so the ledger cannot link two check-ins to one credential.
-- **Historic Merkle roots**: the tree accepts prior roots, so credentials stay valid as new participants enroll.
-
-## Architecture
-
-**Compact contract** (contract/src/bboard.compact) — 3 circuits, all compiled and tested:
-- enroll(commitment) — inserts a credential commitment into a HistoricMerkleTree<10, Bytes<32>>
-- checkIn(currentDate) — ZK membership proof + nullifier burn + counter increment
-- verifyCredential() — pure membership proof for third-party verification
-- publicCommitment(sk) — exported pure circuit so app and contract derive commitments identically
-
-**Tests** (contract/src/test/) — 8/8 passing, with a success *and* failure case for every circuit: wrong-key check-ins rejected, same-day double check-ins rejected, strangers fail verification.
-
-**Demo stack** — a Node demo server runs the compiled circuits through the contract simulator and plays the role of the org's local device (roster of aliases + keys) and the chain (the contract ledger). A React UI presents the three panels plus a live "What the chain sees" strip. This mirrors the intended production architecture: operational data stays in an org-controlled store appropriate for federal privacy compliance; **only the credential proof layer belongs on-chain**. That split is a design position, not a shortcut — sensitive service records should never live on a public ledger, even encrypted.
-
-## Running it
-
-    # 1. Compile the contract (requires compactc 0.31.0)
-    cd contract && npm install && npm run compact && npm run build
-
-    # 2. Run the tests
-    npm run test
-
-    # 3. Start the demo server (from repo root)
-    cd .. && node demo-server.mjs
-
-    # 4. Start the UI (second terminal)
-    cd bboard-ui && npm install && npm run dev
-    # open http://localhost:5173
-
-## Honest trade-offs
-
-- **Enrollment gating**: in this demo anyone can enroll. Production requires an admin-gated enroll (org keys), which is standard Compact practice but out of 48-hour scope.
-- **Verification proves membership, not attendance**: verifyCredential proves "validly enrolled," deliberately *not* "attended N times" — per-credential attendance counts would require exactly the linkability this design forbids. Milestone credentials (prove >= N check-ins without revealing which) are the natural next circuit.
-- **Demo runs circuits locally**, not against Preprod. The contract compiles with the standard toolchain and the provider plumbing for Preprod deployment is retained in api/ for the next milestone.
-
-## Why this matters
-
-I work as a Peer Lead at an opioid drop-in center serving roughly 15,000 contacts a year. The people who walk through our doors ask one question before any other: *"who's going to see this?"* Midnight ID is the first architecture I've found where the honest answer is: **no one — and I can prove it.**
-
-Built with lived experience, at night. Because you ain't coding with Midnight unless you're coding at night. 🌙
-
-## Author
-
-**Andres F. Chavez** — Anonymous Haven LLC · El Paso, TX
-GitHub: [@AC1706-67](https://github.com/AC1706-67)
-EOFcd /mnt/c/Dev/midnight-id && cat > README.md << 'EOF'
-# Midnight ID 🌙
-
-**Portable anonymous credentials for community service organizations — built on Midnight.**
-
-Built fresh during the MLH Midnight Hackathon (July 17–19, 2026).
+---
 
 ## The problem
 
-Community organizations — drop-in centers, peer recovery services, shelters, Naloxone distribution hubs — need to know that the person in front of them is enrolled, eligible, and showing up. But for the people they serve, being *on a list* can cost a job, housing, or custody. Federal privacy law (42 CFR Part 2) exists precisely because a substance-use service record is one of the most dangerous pieces of paper a person can have.
+Substance use records in the United States are governed by [42 CFR Part 2](https://www.ecfr.gov/current/title-42/chapter-I/subchapter-A/part-2),
+a federal privacy rule stricter than HIPAA. It exists because of a specific harm: people
+avoid seeking help when doing so creates a permanent record that can follow them into
+housing applications, employment screening, custody proceedings, and criminal
+proceedings.
 
-Today organizations choose between two bad options: keep identifying records (a breach risk and a trust barrier), or keep nothing (and lose the ability to verify anything, report to funders, or help participants prove their own progress).
+Drop-in centers serving people who use opioids sit exactly on that fault line. They need
+to count visits — funders require it, and services are allocated on it — while the people
+walking through the door often have concrete reasons not to be counted by name.
 
-## What Midnight ID does
+The usual answer is a policy promise: we collect your name but we protect it. That
+promise is only as strong as the institution holding the database, its access controls,
+its staff turnover, and whatever subpoena arrives later.
 
-Midnight ID is a credential layer where **the organization vouches once, and the math takes over**:
+MANO replaces the promise with math. The organization can prove someone enrolled showed
+up today. It cannot learn which enrolled person that was, and neither can anyone reading
+the chain.
 
-- **Enroll** — org staff issue a credential. Only a cryptographic commitment (a hash of a secret key) goes on-chain. The participant's alias never leaves the org's local device.
-- **Check In** — the participant proves they hold an enrolled credential via a zero-knowledge Merkle membership proof. A daily nullifier prevents double check-ins without ever linking check-ins to each other or to an identity.
-- **Verify** — a *different* organization can confirm "this person holds a valid credential" and learn nothing else. Not who they are, not where they enrolled, not when they attended.
+## Design constraints from the field
 
-The public ledger sees only: commitments, burned nullifiers, and counters. **No names. No identities. Only proofs, hashes, and counts.**
+This is built for a specific operating environment, and the constraints drove the
+architecture more than the cryptography did.
 
-## Privacy properties
+**No smartphones.** Roughly half the intended participants are in an unhoused situation.
+A phone-based credential excludes the people who need the service most. The Phase 1
+credential is a physical card carrying a 32-byte secret, scanned at a kiosk tablet at the
+front desk.
 
-| Hidden (always) | Disclosed (public) |
-|---|---|
-| Participant identity | Enrollment count |
-| Secret keys | Total check-in count |
-| Which credential checked in | Commitment hashes |
-| Check-in history per person | Daily nullifiers (unlinkable) |
+**Issuer and participant share a device.** In a drop-in center there is one tablet, and
+staff and participants both use it, sometimes minutes apart. That co-location is the
+argument for separating the two roles in code rather than merging them — a shared private
+state store would accumulate participant secrets on a tablet sitting in a public room.
 
-- **Domain separation**: commitment and nullifier hashes use distinct domain prefixes, so values can never be confused or cross-correlated.
-- **Daily nullifiers**: hash(sk, date) — the same person produces a different nullifier every day, so the ledger cannot link two check-ins to one credential.
-- **Historic Merkle roots**: the tree accepts prior roots, so credentials stay valid as new participants enroll.
+**Nobody trusts the operator by default, and they shouldn't have to.** The privacy
+property has to hold against the organization running the system, not just against
+outsiders.
 
-## Architecture
+---
 
-**Compact contract** (contract/src/bboard.compact) — 3 circuits, all compiled and tested:
-- enroll(commitment) — inserts a credential commitment into a HistoricMerkleTree<10, Bytes<32>>
-- checkIn(currentDate) — ZK membership proof + nullifier burn + counter increment
-- verifyCredential() — pure membership proof for third-party verification
-- publicCommitment(sk) — exported pure circuit so app and contract derive commitments identically
+## How it works
 
-**Tests** (contract/src/test/) — 8/8 passing, with a success *and* failure case for every circuit: wrong-key check-ins rejected, same-day double check-ins rejected, strangers fail verification.
+### Enrollment
 
-**Demo stack** — a Node demo server runs the compiled circuits through the contract simulator and plays the role of the org's local device (roster of aliases + keys) and the chain (the contract ledger). A React UI presents the three panels plus a live "What the chain sees" strip. This mirrors the intended production architecture: operational data stays in an org-controlled store appropriate for federal privacy compliance; **only the credential proof layer belongs on-chain**. That split is a design position, not a shortcut — sensitive service records should never live on a public ledger, even encrypted.
+Staff generate a 32-byte secret, compute a commitment from it, and insert the commitment
+into an on-chain Merkle tree. The secret is written to the participant's card and
+discarded — it never enters the issuer's private state, and staff never see it associated
+with a name.
+
+```
+commitment = persistentHash([pad(32, "midnight-id:commitment"), sk])
+```
+
+`enroll` is authorized. The issuer public key is pinned in the constructor as a `sealed`
+ledger field, and the circuit asserts that the caller holds the matching secret:
+
+```compact
+assert(disclose(publicIssuerPk(issuerSk()) == issuerPk), "not the issuer");
+```
+
+Without that check anyone could insert an arbitrary commitment and mint themselves a
+credential that passes every downstream circuit. Note that `ownPublicKey()` is
+prover-supplied local state and provides no cryptographic binding, so it is deliberately
+not used for authorization. Compact 0.31.0 has no signature-verification builtin and no
+`msg.sender`; authorization here is a sealed field pinned at deployment plus a witness
+secret plus an in-circuit assertion.
+
+### Check-in
+
+The participant scans their card. The client fetches the current Merkle path for their
+commitment from the indexer, and the circuit proves three things at once: that the
+commitment is in the tree, that the prover knows the secret behind it, and that today's
+nullifier has not been spent.
+
+```
+nullifier = persistentHash([pad(32, "midnight-id:nullifier"), sk, currentDate])
+```
+
+The domain separators are load-bearing, not decorative. Without distinct tags, a
+commitment and a nullifier derived from the same secret could collide across contexts.
+
+The soundness-critical line binds the witness-supplied path to the witness-supplied
+secret:
+
+```compact
+assert(path.leaf == commitment, "path does not match credential");
+```
+
+Without it, a prover holding their own valid secret could submit somebody else's Merkle
+path. Verified at the ZKIR wire level: ops 44/45 constrain the leaf wires equal to the
+commitment wires, and op 49 folds those same wires into the root.
+
+### Verification
+
+A third party — a housing provider, an employer, a court — can be shown a proof that the
+holder has a valid enrolled credential, without learning which one. `verifyCredential`
+leaves the check-in counter and the nullifier set untouched; it is a membership proof, not
+an attendance event.
+
+### Ledger state
+
+```compact
+export ledger credentialTree: HistoricMerkleTree<10, Bytes<32>>;
+export ledger usedNullifiers: Set<Bytes<32>>;
+export ledger enrollmentCount: Counter;
+export ledger totalCheckIns: Counter;
+export sealed ledger issuerPk: Bytes<32>;
+```
+
+A depth-10 tree holds 1024 credentials and proves faster than a deeper one.
+`HistoricMerkleTree` accepts prior roots, so a path fetched before the tree grew is still
+valid — which matters because the tree changes every time anyone enrolls.
+
+---
+
+## What is private and what is not
+
+Being precise about this is more useful than claiming everything is hidden.
+
+**Hidden:** participant identity, the card secret, which credential checked in, the link
+between any two check-ins by the same person, the link between enrollment and any
+subsequent check-in.
+
+**Public:** how many credentials exist, how many check-ins have occurred, how many
+nullifiers have been spent, the issuer's public key, and the timing of each transaction.
+
+**Leaked by timing.** Transactions are visible as they land. An observer watching the
+chain in real time, who can also see the front door of a specific building, can correlate
+the two. Zero-knowledge proofs do not hide that a transaction happened. Batching or
+delayed submission would mitigate this and is not implemented.
+
+**Prover-supplied date.** `currentDate` is a circuit parameter, not a trusted time
+source. A dishonest prover can pass a different date and burn more than one nullifier per
+real day. This bounds what the check-in count means: it is a count of distinct
+(credential, claimed-date) pairs, not a count of physical visits. Compact 0.31.0 exposes
+no trusted clock to constrain it against. Documented rather than hidden.
+
+---
+
+## Role separation
+
+Three roles, two private state types, and one deliberate omission.
+
+| Role | Private state | Storage | Circuits |
+|---|---|---|---|
+| Issuer | `IssuerPrivateState` | LevelDB, own store | `enroll` |
+| Participant | `ParticipantPrivateState` | In-memory only | `checkIn`, `verifyCredential` |
+| Verifier | none | none | reads ledger state |
+
+The Compact-generated `Witnesses<PS>` type requires all three witnesses regardless of
+role, so each role's witness object supplies throwing stubs for the witnesses it must not
+have. An issuer build cannot produce a participant secret; a participant build cannot
+produce the issuer key. The trust boundary is a runtime assertion, not a comment.
+
+`EphemeralPrivateStateProvider` backs the participant with a `Map` and nothing else. Its
+export and import methods throw by design — a provider whose purpose is keeping
+participant secrets off disk should have no serialization path at all.
+
+The participant secret lives for one kiosk session: scanned, used for one or more proofs,
+then dropped by an explicit `close()`. An earlier version cleared it in a `finally` block
+after every proof, which destroyed the session and made any second operation fail. The
+session boundary is where the participant walks away, not where a proof completes.
+
+The verifier is not a CLI mode in this submission. It needs no wallet, seed, or proof
+server, while the CLI builds a wallet before anything else; wiring a wallet-free path was
+not worth the complexity for a role that reads two public counters.
+`deriveManoPublicState` is exported for it.
+
+---
+
+## Verification status
+
+Everything below was exercised end to end against a local Midnight stack — node, indexer,
+and proof server in Docker — with real PLONK proofs, not simulator runs.
+
+| Operation | Result | Time |
+|---|---|---|
+| deploy | contract deployed, issuer key pinned | ~19s |
+| enroll | credential inserted, `enrollmentCount` 0 → 1 | ~23s |
+| checkIn | `totalCheckIns` 0 → 1, nullifier spent | ~24s |
+| verifyCredential | proof accepted, counters unchanged | ~22s |
+| checkIn (same card, same day) | **rejected** | ~44ms |
+
+The rejection is worth reading carefully. It is the contract's own
+`already checked in today` assertion, and it fires **locally, before the proof server is
+invoked** — 44 milliseconds against 24 seconds. Circuit execution happens client-side
+first, so an invalid attempt costs the participant nothing and never reaches the network.
+That is a property of Midnight's execution model rather than anything clever here, but it
+is the difference between a kiosk that fails instantly and one that charges someone a fee
+to be told no.
+
+Contract-level: 3 impure circuits plus 3 pure circuits, compiling clean on compactc
+0.31.0. 11 tests passing, including a mutation-tested regression covering `enroll`
+authorization.
+
+| Circuit | k | rows |
+|---|---|---|
+| `checkIn` | 14 | 10945 |
+| `verifyCredential` | 13 | 6742 |
+| `enroll` | 13 | 2299 |
+
+**Not deployed to Preprod.** Wallet sync does not complete against Preprod on
+wallet-sdk-facade 4.0.1: heap grows without bound and the process dies at ~1.6GB on Node
+defaults, ~6.6GB with an 8GB limit, still unfinished after three hours, with repeated
+`Wallet.Sync` failures. This is [midnight-wallet #405](https://github.com/midnightntwrk/midnight-wallet/issues/405),
+acknowledged upstream — large initial backlog, RPC disconnects, 40–60+ minute first sync.
+The relevant knob (`batchUpdates.size`, defaulting to 10 events per batch) exists in the
+SDK sync config but is not reachable through `FluentWalletBuilder`.
+
+Two smaller issues found in testkit-js 4.1.1 along the way: the environment health check
+uses a 1000ms axios timeout, and cold TLS to the Preprod indexer takes ~5.7s, so it fails
+on first connection every time; and `FaucetClient.requestTokens` posts a hardcoded dummy
+captcha token that the faucet rejects with `400 decoding_error`.
+
+---
 
 ## Running it
 
-    # 1. Compile the contract (requires compactc 0.31.0)
-    cd contract && npm install && npm run compact && npm run build
+Requires Node 24, Docker, and compactc 0.31.0.
 
-    # 2. Run the tests
-    npm run test
+```bash
+npm install
+npm run compact --workspace=contract
+npm run build --workspace=api
+npm run build --workspace=bboard-cli
+npm run standalone --workspace=bboard-cli
+```
 
-    # 3. Start the demo server (from repo root)
-    cd .. && node demo-server.mjs
+The standalone launcher provisions node, indexer, and proof server containers and funds a
+genesis wallet, so no faucet or network access is needed.
 
-    # 4. Start the UI (second terminal)
-    cd bboard-ui && npm install && npm run dev
-    # open http://localhost:5173
+Then, in the CLI:
 
-## Honest trade-offs
+1. Role `1` (issuer) — press Enter to generate an issuer key, `1` to deploy, `1` to
+   enroll. Save the contract address and the card secret it prints.
+2. Role `3` to leave issuer mode, then role `2` (participant) — paste the contract
+   address and card secret.
+3. `1` to check in. `1` again to watch the same-day rejection.
 
-- **Enrollment gating**: in this demo anyone can enroll. Production requires an admin-gated enroll (org keys), which is standard Compact practice but out of 48-hour scope.
-- **Verification proves membership, not attendance**: verifyCredential proves "validly enrolled," deliberately *not* "attended N times" — per-credential attendance counts would require exactly the linkability this design forbids. Milestone credentials (prove >= N check-ins without revealing which) are the natural next circuit.
-- **Demo runs circuits locally**, not against Preprod. The contract compiles with the standard toolchain and the provider plumbing for Preprod deployment is retained in api/ for the next milestone.
+---
 
-## Why this matters
+## Honest limitations
 
-I work as a Peer Lead at an opioid drop-in center serving roughly 15,000 contacts a year. The people who walk through our doors ask one question before any other: *"who's going to see this?"* Midnight ID is the first architecture I've found where the honest answer is: **no one — and I can prove it.**
+**Card loss is credential loss.** The card carries the secret; there is no recovery path.
+Re-enrollment issues a new secret and a new leaf, and prior check-ins become unprovable by
+that person. Acceptable for counting visits. Not acceptable for a milestone credential
+that has to survive to reach a housing provider, which is a Phase 2 problem.
 
-Built with lived experience, at night. Because you ain't coding with Midnight unless you're coding at night. 🌙
+**The issuer key is a single point of failure.** Whoever holds it can enroll arbitrary
+commitments. One key per device limits the blast radius; there is no revocation.
 
-## Author
+**The demo CLI prints the card secret to the logger** so it can be written onto a card by
+hand. That is correct for a local demo and wrong anywhere a real log sink is attached.
 
-**Andres F. Chavez** — Anonymous Haven LLC · El Paso, TX
-GitHub: [@AC1706-67](https://github.com/AC1706-67)
+**`currentDate` encoding is duplicated** between the CLI and the contract rather than
+single-sourced. They currently agree; nothing enforces that they continue to.
+
+**Packaging still carries upstream names.** Workspaces are named `bboard-*` and some
+inherited metadata remains. The compiled asset path and the ZK config path are coupled and
+have to move together, so the rename is deliberately a separate change rather than
+something rushed before submission.
+
+---
+
+## Why this is not just an attendance tracker
+
+The credential is designed to be soulbound — non-transferable, belonging to the person who
+earned it. The Phase 1 property is narrow: prove enrollment, prove a check-in. The reason
+to build it on a chain rather than in a database is that the proof outlives the
+institution. A drop-in center can close, lose its funding, or lose its records. A
+credential that only exists in an organization's database dies with the organization.
+
+Recovery is one of the few areas where a person's history is both the most valuable thing
+they have and the most dangerous thing to disclose. Building the system so that disclosure
+is mathematically impossible rather than administratively discouraged is the entire point.
+
+---
+
+## License
+
+Apache 2.0. See [LICENSE](./LICENSE).
