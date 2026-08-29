@@ -106,7 +106,27 @@ The rejection is the contract's own `already checked in today` assertion, failin
 before the proof server is invoked — no fees are spent on a rejected attempt.
 `verifyCredential` leaves `totalCheckIns` and the nullifier set unchanged.
 
-Not yet deployed to Preprod.
+## Preprod — blocked, do not retry without new information
+
+Preprod deployment is blocked inside the wallet SDK, before any MANO code runs.
+
+1. **testkit health check timeout.** `axios.get(url, { timeout: 1000 })` (4 sites in
+   `testkit-js/dist/index.mjs`) fails on first connection: cold TLS to the Preprod indexer
+   takes ~5.7s, warm ~0.5s. Worked around locally by patching the timeout to 30000 in
+   `node_modules`, which does NOT survive `npm install`. Proper fix is to warm the
+   connection from `preprod.ts` before testkit's check.
+2. **testkit FaucetClient cannot fund.** It posts a hardcoded dummy captcha token; the
+   faucet requires a real Cloudflare Turnstile `captchaToken` in the body and returns 400
+   `decoding_error`. Fund via the web faucet at
+   https://midnight-tmnight-preprod.nethermind.dev/ instead. Note `waitForUnshieldedFunds`
+   defaults `fundFromFaucet` to false, so the CLI never even attempts it.
+3. **Wallet sync never completes.** After a confirmed faucet transaction (1000 tNight), the
+   wallet balance stays 0 and `Wallet.Sync` fails repeatedly at
+   `wallet-sdk-shielded/dist/v1/Sync.js:100`. Heap grows without bound - OOM at ~1.6GB
+   default, at ~6.6GB with `--max-old-space-size=8192`, and still unfinished after 3 hours.
+   wallet-sdk-facade 4.0.1, testkit-js 4.1.1. This is upstream, not MANO code.
+
+Standalone is the verified demo environment until this is resolved upstream.
 
 ## Environment
 
