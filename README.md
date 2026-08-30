@@ -15,9 +15,17 @@ avoid seeking help when doing so creates a permanent record that can follow them
 housing applications, employment screening, custody proceedings, and criminal
 proceedings.
 
-Drop-in centers serving people who use opioids sit exactly on that fault line. They need
-to count visits — funders require it, and services are allocated on it — while the people
-walking through the door often have concrete reasons not to be counted by name.
+That rule reaches further than most people assume. It covers any federally assisted
+program that holds itself out as providing SUD diagnosis, treatment, or referral for
+treatment: detox facilities, residential and outpatient treatment, opioid treatment
+programs and other MAT clinics, identified SUD units inside general hospitals and
+correctional facilities, and drop-in centers that refer people into treatment. Referral
+alone is enough to trigger it, and an OTP qualifies through its dispensing authority
+regardless of funding source.
+
+All of them share the same tension. They need to count visits — funders require it, and
+services are allocated on it — while the people walking through the door often have
+concrete reasons not to be counted by name.
 
 The usual answer is a policy promise: we collect your name but we protect it. That
 promise is only as strong as the institution holding the database, its access controls,
