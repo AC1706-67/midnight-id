@@ -176,9 +176,9 @@ Participant mode:
 Which would you like to do? `;
 
 const participantLoop = async (providers: ParticipantProviders, rli: Interface, logger: Logger): Promise<void> => {
-  const address = await rli.question('Contract address (hex)? ');
+  const address = await (await rli.question('Contract address (hex)? ')).trim();
   const cardSecret = await rli.question('Card secret (hex)? ');
-  const sk = Uint8Array.from(Buffer.from(cardSecret.replace(/^0x/, ''), 'hex'));
+  const sk = Uint8Array.from(Buffer.from(cardSecret.trim().replace(/^0x/, ''), 'hex'));
   if (sk.length !== 32) {
     logger.error('Card secret must be 32 bytes of hex.');
     return;
