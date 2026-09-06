@@ -1,8 +1,8 @@
 {
-  "name": "@midnight-ntwrk/example-bboard",
+  "name": "mano-anonymous-checkin",
   "version": "0.1.0",
-  "author": "IOG",
-  "license": "MIT",
+  "author": "Andres F. Chavez",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -69,5 +69,6 @@
     "protobufjs@7.6.4": true,
     "ssh2@1.17.0": true,
     "@swc/core@1.15.43": true
-  }
+  },
+  "description": "Zero-knowledge anonymous check-in credentials on Midnight"
 }

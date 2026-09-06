@@ -230,11 +230,31 @@ uses a 1000ms axios timeout, and cold TLS to the Preprod indexer takes ~5.7s, so
 on first connection every time; and `FaucetClient.requestTokens` posts a hardcoded dummy
 captcha token that the faucet rejects with `400 decoding_error`.
 
+### Browser path
+
+The CLI sync failure is a wallet-sdk-facade problem, not a network one. The same account
+syncs in seconds in the Lace browser wallet, so the route to a Preprod transaction is a
+browser DApp rather than the CLI.
+
+That wallet layer is built and connects. `useWalletDetection` finds the connector at
+`window.midnight.lace`; `walletAdapter` implements `WalletProvider` and `MidnightProvider`
+against `@midnight-ntwrk/midnight-js-protocol/ledger`, delegating balancing and signing to
+the extension through `balanceUnsealedTransaction` and `submitTransaction`.
+
+One finding worth recording: Lace's `getConfiguration()` returns a hosted proof server at
+`proof-server.preprod.midnight.network`. The browser path needs no local proof server, so
+Docker is a CLI-only requirement. `getProvingProvider` is declared on the connected API
+but unused; proving goes over HTTP to that URI.
+
+Not yet done: no contract call has been made from the browser, so no Preprod transaction
+exists.
+
 ---
 
 ## Running it
 
-Requires Node 24, Docker, and compactc 0.31.0.
+Requires Node 24 and compactc 0.31.0. Docker is needed only for the CLI
+standalone stack.
 
 ```bash
 npm install
