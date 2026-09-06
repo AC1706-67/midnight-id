@@ -7,12 +7,12 @@ import { createWalletProvidersFromConnectedAPI, type ShieldedAddress } from './w
 
 export type MidnightIdCircuits = 'enroll' | 'checkIn' | 'verifyCredential';
 
-export async function buildBrowserProviders(
+export async function buildBrowserProviders<C extends string = MidnightIdCircuits>(
   connectedAPI: ConnectedAPI,
   contractName: string,
 ) {
   const zkConfigHttpBase = window.location.origin + '/contract/compiled/' + contractName;
-  const zkConfigProvider = new FetchZkConfigProvider<MidnightIdCircuits>(
+  const zkConfigProvider = new FetchZkConfigProvider<C>(
     zkConfigHttpBase,
     fetch.bind(window),
   );
@@ -37,7 +37,9 @@ export async function buildBrowserProviders(
     },
   };
 
-  const proofProvider = httpClientProofProvider(config.proverServerUri!, zkConfigProvider);
+  // Hosted prover rejects browser origins (CORS/403), so use the local proof server.
+  const proverUri = import.meta.env.VITE_PROOF_SERVER_URI || 'http://localhost:6300';
+  const proofProvider = httpClientProofProvider(proverUri, zkConfigProvider);
 
   const shieldedAddress = (await connectedAPI.getShieldedAddresses()) as ShieldedAddress;
 

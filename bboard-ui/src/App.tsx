@@ -1,4 +1,4 @@
 import React from 'react';
-import { WalletProbe } from './components/WalletProbe';
-const App: React.FC = () => <WalletProbe />;
+import { IssuerPanel } from './components/IssuerPanel';
+const App: React.FC = () => <IssuerPanel />;
 export default App;

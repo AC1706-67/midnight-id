@@ -47,7 +47,7 @@ export class ManoIssuerAPI {
    * computed by the caller. The participant secret key is never passed
    * to this method and never enters issuer private state.
    */
-  async enroll(commitment: Uint8Array): Promise<void> {
+  async enroll(commitment: Uint8Array): Promise<string> {
     this.logger?.info('enrollingCredential');
     const txData = await this.deployedContract.callTx.enroll(commitment);
     this.logger?.trace({
@@ -57,6 +57,7 @@ export class ManoIssuerAPI {
         blockHeight: txData.public.blockHeight,
       },
     });
+    return txData.public.txHash;
   }
 
   /**

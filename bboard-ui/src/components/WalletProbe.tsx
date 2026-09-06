@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useWalletDetection } from '../hooks/useWalletDetection';
+import { ManoIssuerAPI } from '@midnight-ntwrk/bboard-api';
+import { buildBrowserProviders } from '../lib/providers';
 
 export function WalletProbe() {
   const [log, setLog] = useState<string[]>([]);
@@ -17,6 +19,8 @@ export function WalletProbe() {
       add('getProvingProvider is ' + typeof c.getProvingProvider);
       const un = await c.getUnshieldedAddress();
       add('unshielded: ' + JSON.stringify(un));
+      add('ManoIssuerAPI imported: ' + typeof ManoIssuerAPI);
+      add('buildBrowserProviders: ' + typeof buildBrowserProviders);
     } catch (e: any) {
       add('ERROR: ' + (e?.message ?? String(e)));
     }

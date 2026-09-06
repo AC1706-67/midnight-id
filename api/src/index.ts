@@ -20,3 +20,5 @@ export * from './issuer-api.js';
 export * from './participant-api.js';
 
 export * as utils from './utils/index.js';
+
+export { pureCircuits } from '../../contract/src/managed/bboard/contract/index.js';

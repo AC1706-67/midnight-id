@@ -5,9 +5,9 @@
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
-  "module": "./dist/index.js",
-  "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "module": "./dist/api/src/index.js",
+  "main": "./dist/api/src/index.js",
+  "types": "./dist/api/src/index.d.ts",
   "scripts": {
     "build": "rm -rf dist && tsc --project tsconfig.build.json",
     "ci": "npm run typecheck && npm run lint && npm run build",

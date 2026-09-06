@@ -1,0 +1,66 @@
+import { useState } from 'react';
+import { useWalletDetection } from '../hooks/useWalletDetection';
+import { ManoIssuerAPI } from '@midnight-ntwrk/bboard-api';
+import { pureCircuits } from '../../../contract/src/managed/bboard/contract/index.js';
+import { buildBrowserProviders } from '../lib/providers';
+
+const hex = (b: Uint8Array) =>
+  Array.from(b).map((x) => x.toString(16).padStart(2, '0')).join('');
+
+const rand32 = () => {
+  const b = new Uint8Array(32);
+  crypto.getRandomValues(b);
+  return b;
+};
+
+export function IssuerPanel() {
+  const [log, setLog] = useState<string[]>([]);
+  const [api, setApi] = useState<any>(null);
+  const [issuerSk] = useState<Uint8Array>(() => rand32());
+  const add = (m: string) => setLog((l) => [...l, m]);
+  const { availableAPIs, isDetecting } = useWalletDetection();
+
+  async function deploy(wallet: any) {
+    try {
+      add('connecting...');
+      const c = await wallet.connect('preprod');
+      add('building providers...');
+      const providers = await buildBrowserProviders<'enroll'>(c, 'bboard');
+      add('ISSUER SECRET KEY (SAVE THIS): ' + hex(issuerSk));
+      add('deploying... this takes 30-90s, do not reload');
+      const deployed = await ManoIssuerAPI.deploy(providers as any, issuerSk);
+      setApi(deployed);
+      add('DEPLOYED at: ' + deployed.deployedContractAddress);
+    } catch (e: any) {
+      add('ERROR: ' + (e?.message ?? String(e)));
+      console.error(e);
+    }
+  }
+
+  async function enroll() {
+    try {
+      const sk = rand32();
+      const commitment = pureCircuits.publicCommitment(sk);
+      add('enrolling... 30-90s');
+      const txHash = await api.enroll(commitment);
+      add('ENROLLED tx: ' + txHash);
+      add('CARD SECRET: ' + hex(sk));
+    } catch (e: any) {
+      add('ERROR: ' + (e?.message ?? String(e)));
+      console.error(e);
+    }
+  }
+
+  return (
+    <div style={{ fontFamily: 'monospace', padding: 20 }}>
+      <h2>MANO Issuer</h2>
+      <p>{isDetecting ? 'detecting...' : availableAPIs.length + ' wallet(s)'}</p>
+      {!api &&
+        availableAPIs.map((w, i) => (
+          <button key={i} onClick={() => deploy(w)}>connect + deploy</button>
+        ))}
+      {api && <button onClick={enroll}>enroll a credential</button>}
+      <pre style={{ whiteSpace: 'pre-wrap' }}>{log.join('\n')}</pre>
+    </div>
+  );
+}

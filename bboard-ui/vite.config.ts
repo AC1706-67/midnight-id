@@ -14,6 +14,7 @@
 // limitations under the License.
 
 import { defineConfig } from 'vite';
+import path from 'path';
 import react from '@vitejs/plugin-react';
 import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
@@ -98,6 +99,12 @@ export default defineConfig({
   },
   // Add specific import configuration for more control
   resolve: {
+    alias: [
+      {
+        find: /^.*\/contract\/src\/managed\/bboard\/contract\/index\.js$/,
+        replacement: path.resolve(__dirname, '../contract/src/managed/bboard/contract/index.js'),
+      },
+    ],
     // Ensure WASM files are loaded properly
     extensions: ['.mjs', '.js', '.ts', '.jsx', '.tsx', '.json', '.wasm'],
     mainFields: ['browser', 'module', 'main'],
