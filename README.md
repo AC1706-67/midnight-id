@@ -188,8 +188,8 @@ not worth the complexity for a role that reads two public counters.
 
 ## Verification status
 
-Everything below was exercised end to end against a local Midnight stack — node, indexer,
-and proof server in Docker — with real PLONK proofs, not simulator runs.
+Every operation below has been run end to end with real PLONK proofs, not simulator runs:
+first against a local Midnight stack, and now from the browser against Preprod.
 
 | Operation | Result | Time |
 |---|---|---|
@@ -217,7 +217,27 @@ authorization.
 | `verifyCredential` | 13 | 6742 |
 | `enroll` | 13 | 2299 |
 
-**Not deployed to Preprod.** Wallet sync does not complete against Preprod on
+### Preprod
+
+Deployed and exercised from the browser DApp on Preprod:
+
+| Artifact | Value |
+|---|---|
+| Contract | `40a1a93c8462eb349e65531a2042a3b55e0b8acaa9234b48eb6eb5c5496bfa46` |
+| Enroll tx | `b1a1d5d0b2c64d710d1502440434b756d80fa38f8c457d7b815fdebdaee2b96d` |
+| Commitment enrolled | `6dbb22403b730447c4a2262d79c0b3b932bae218b9547ac3945fe64794cf492c` |
+
+`checkIn` and `verifyCredential` both proved and submitted against that contract. A second
+same-day `checkIn` on the same card was rejected by the `already checked in today`
+assertion, locally, before the proof server was invoked — the same behaviour seen locally,
+now confirmed on a live network.
+
+Preprod timings are far slower than local: check-in took **83s** and verification **65s**,
+against ~24s locally. Proof generation dominates, and at a drop-in center serving on the
+order of 15,000 contacts a year, 83 seconds at the door is not viable. Reducing it is the
+main Wave 2 engineering problem.
+
+**The CLI still cannot reach Preprod.** Wallet sync does not complete against Preprod on
 wallet-sdk-facade 4.0.1: heap grows without bound and the process dies at ~1.6GB on Node
 defaults, ~6.6GB with an 8GB limit, still unfinished after three hours, with repeated
 `Wallet.Sync` failures. This is [midnight-wallet #405](https://github.com/midnightntwrk/midnight-wallet/issues/405),
@@ -241,20 +261,27 @@ That wallet layer is built and connects. `useWalletDetection` finds the connecto
 against `@midnight-ntwrk/midnight-js-protocol/ledger`, delegating balancing and signing to
 the extension through `balanceUnsealedTransaction` and `submitTransaction`.
 
-One finding worth recording: Lace's `getConfiguration()` returns a hosted proof server at
-`proof-server.preprod.midnight.network`. The browser path needs no local proof server, so
-Docker is a CLI-only requirement. `getProvingProvider` is declared on the connected API
-but unused; proving goes over HTTP to that URI.
+One finding worth recording, because it cost real time: Lace's `getConfiguration()`
+returns a hosted proof server at `proof-server.preprod.midnight.network`, which suggests
+the browser needs no local prover. It does. That host answers browser-origin requests with
+`403` and no `Access-Control-Allow-Origin` header, so every circuit call fails on CORS.
+Deploy succeeds — it generates no ZK proof — which makes the problem look intermittent
+until you notice the pattern. A local proof server on `:6300` is required for the browser
+path, exactly as the Lace UI warns.
 
-Not yet done: no contract call has been made from the browser, so no Preprod transaction
-exists.
+Two operational notes for anyone reproducing this. tNIGHT from the faucet generates no
+DUST until it is registered through Lace's **Generate tDUST** flow; until then every
+transaction fails with `Wallet.InsufficientFunds: could not balance dust` while the wallet
+shows a healthy tNIGHT balance. And the connector handle goes stale across a wallet
+lock/unlock, surfacing as `Remote API with channel ... was shutdown`, so the DApp
+re-connects on every action rather than holding one handle.
 
 ---
 
 ## Running it
 
-Requires Node 24 and compactc 0.31.0. Docker is needed only for the CLI
-standalone stack.
+Requires Node 24 and compactc 0.31.0. Docker is needed for both paths: the CLI
+standalone stack, and the proof server the browser path proves against.
 
 ```bash
 npm install
@@ -274,6 +301,42 @@ Then, in the CLI:
 2. Role `3` to leave issuer mode, then role `2` (participant) — paste the contract
    address and card secret.
 3. `1` to check in. `1` again to watch the same-day rejection.
+
+### Browser path (Preprod)
+
+Requires the Lace extension on Chrome, a Midnight account funded from the
+[Preprod faucet](https://faucet.preprod.midnight.network/), and that tNIGHT registered
+through Lace's **Generate tDUST** flow.
+
+Start a local proof server:
+
+```bash
+docker run -d --name midnight-proof-server -p 6300:6300 \
+  -v midnight-zk-params:/root/.cache/midnight/zk-params \
+  midnightnetwork/proof-server:latest \
+  midnight-proof-server --num-workers 4
+```
+
+First start downloads and verifies the BLS parameters, so give it a minute. The named
+volume keeps them across restarts.
+
+Then build the contract and serve the DApp. The compiled ZK keys are gitignored and must
+be copied into `public/` after any recompile, or `FetchZkConfigProvider` gets a 404 at
+proving time:
+
+```bash
+npm run compact --workspace=contract
+npm run build --workspace=api
+cp -R contract/src/managed/bboard/* bboard-ui/public/contract/compiled/bboard/
+npm run dev --workspace=bboard-ui -- --mode preprod
+```
+
+`--mode preprod` matters: without it Vite loads no env file and `VITE_NETWORK_ID` is
+undefined, which fails later and confusingly.
+
+At `localhost:5173`, in the issuer panel: deploy, generate a card secret, enroll. In the
+participant kiosk: paste the contract address and that same card secret, check in, then
+check in again to see the rejection.
 
 ---
 
