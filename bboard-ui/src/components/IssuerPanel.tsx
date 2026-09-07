@@ -114,7 +114,8 @@ export function IssuerPanel() {
         />
       </div>
       <div style={{ marginTop: 8 }}>
-        <button onClick={onEnroll} disabled={busy || isDetecting}>enroll participant</button>
+        <button onClick={() => setCardSecret(hex(randomBytes32()))} disabled={busy}>generate card secret</button>
+        <button style={{ marginLeft: 8 }} onClick={onEnroll} disabled={busy || isDetecting}>enroll participant</button>
       </div>
       <pre style={{ marginTop: 16, whiteSpace: 'pre-wrap' }}>{log.join('\n')}</pre>
     </div>
