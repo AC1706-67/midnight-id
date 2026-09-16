@@ -26,8 +26,6 @@ import ReactDOM from 'react-dom/client';
 import { ThemeProvider } from '@mui/material';
 import { setNetworkId, NetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 import App from './App';
-import { IssuerPanel } from './components/IssuerPanel';
-import { ParticipantPanel } from './components/ParticipantPanel';
 import CssBaseline from '@mui/material/CssBaseline';
 import { theme } from './config/theme';
 import '@midnight-ntwrk/dapp-connector-api';
@@ -49,9 +47,7 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <>
     <CssBaseline />
     <ThemeProvider theme={theme}>
-        <App />
-        <IssuerPanel />
-        <ParticipantPanel />
+      <App />
     </ThemeProvider>
   </>,
 );

@@ -1,4 +1,12 @@
 import React from 'react';
 import { IssuerPanel } from './components/IssuerPanel';
-const App: React.FC = () => <IssuerPanel />;
+import { ParticipantPanel } from './components/ParticipantPanel';
+
+const App: React.FC = () => (
+  <div>
+    <IssuerPanel />
+    <ParticipantPanel />
+  </div>
+);
+
 export default App;
