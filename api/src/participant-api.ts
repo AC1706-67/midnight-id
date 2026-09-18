@@ -20,6 +20,7 @@ import { type ContractAddress } from '@midnight-ntwrk/midnight-js-protocol/compa
 import { type Logger } from 'pino';
 import { findDeployedContract } from '@midnight-ntwrk/midnight-js-contracts';
 import * as Mano from '../../contract/src/managed/bboard/contract/index.js';
+import { epochToBytes } from '../../contract/src/epoch.js';
 import { ParticipantCompiledContract } from './compiled.js';
 import { createParticipantPrivateState, type CredentialMerklePath } from './types.js';
 import { participantPrivateStateKey, type ParticipantProviders, type ParticipantContract, type DeployedParticipantContract } from './common-types.js';
@@ -63,14 +64,25 @@ export class ManoParticipantAPI {
     if (existing === null) {
       throw new Error('no participant private state - join() must be called first');
     }
-    const commitment = Mano.pureCircuits.publicCommitment(existing.secretKey);
     const contractState = await this.providers.publicDataProvider.queryContractState(this.deployedContractAddress);
     if (contractState === null) {
       throw new Error('contract state unavailable from indexer');
     }
-    const path = Mano.ledger(contractState.data).credentialTree.findPathForLeaf(commitment);
+    const ledgerState = Mano.ledger(contractState.data);
+    // Commitments are epoch-scoped. Read the epoch fresh every time: if the
+    // org advanced it, the old leaf no longer matches and this participant
+    // needs to re-attest in person.
+    const commitment = Mano.pureCircuits.publicCommitment(
+      existing.secretKey,
+      epochToBytes(ledgerState.currentEpoch),
+    );
+    const path = ledgerState.credentialTree.findPathForLeaf(commitment);
     if (path === undefined) {
-      throw new Error('credential not found in tree - card is not enrolled');
+      throw new Error(
+        `credential not found in tree for epoch ${ledgerState.currentEpoch} - ` +
+        'card is not enrolled, or was issued in an earlier attestation epoch ' +
+        'and needs re-attestation',
+      );
     }
     await this.providers.privateStateProvider.set(participantPrivateStateKey, createParticipantPrivateState(existing.secretKey, path as CredentialMerklePath));
   }

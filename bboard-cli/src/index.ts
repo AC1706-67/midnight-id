@@ -39,6 +39,7 @@ import {
 } from '../../api/src/index';
 import { type WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
 import { ledger, type Ledger, pureCircuits } from '../../contract/src/managed/bboard/contract/index.js';
+import { epochToBytes } from '../../contract/src/epoch.js';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
@@ -139,8 +140,13 @@ const issuerLoop = async (providers: IssuerProviders, issuerSecretKey: Uint8Arra
       switch (choice) {
         case '1': {
           const sk = randomBytes(32);
-          const commitment = pureCircuits.publicCommitment(sk);
+          // Commitments are epoch-scoped: enroll against the epoch the card
+          // will be used in. Do not advance the epoch mid-issuance session,
+          // or cards issued just before the turnover are dead on arrival.
+          const epoch = await issuer.currentEpoch();
+          const commitment = pureCircuits.publicCommitment(sk, epochToBytes(epoch));
           await issuer.enroll(commitment);
+          logger.info(`Enrolled in attestation epoch ${epoch}.`);
           logger.info('Credential enrolled.');
           logger.info(`CARD SECRET (write to card, not stored anywhere): ${toHex(sk)}`);
           break;

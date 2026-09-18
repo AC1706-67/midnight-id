@@ -69,6 +69,8 @@ export type ManoPublicState = {
   readonly enrollmentCount: bigint;
   readonly totalCheckIns: bigint;
   readonly nullifierCount: bigint;
+  /** Current attestation epoch. Credentials issued in earlier epochs no longer validate. */
+  readonly currentEpoch: bigint;
   readonly issuerPk: Uint8Array;
   readonly treeIsFull: boolean;
 };
@@ -77,6 +79,7 @@ export const deriveManoPublicState = (ledger: Ledger): ManoPublicState => ({
   enrollmentCount: ledger.enrollmentCount,
   totalCheckIns: ledger.totalCheckIns,
   nullifierCount: ledger.usedNullifiers.size(),
+  currentEpoch: ledger.currentEpoch,
   issuerPk: ledger.issuerPk,
   treeIsFull: ledger.credentialTree.isFull(),
 });

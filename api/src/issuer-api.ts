@@ -24,7 +24,7 @@ import * as utils from './utils/index.js';
 export class ManoIssuerAPI {
   private constructor(
     public readonly deployedContract: DeployedIssuerContract,
-    providers: IssuerProviders,
+    private readonly providers: IssuerProviders,
     private readonly logger?: Logger,
   ) {
     this.deployedContractAddress = deployedContract.deployTxData.public.contractAddress;
@@ -39,6 +39,44 @@ export class ManoIssuerAPI {
   readonly deployedContractAddress: ContractAddress;
 
   readonly state$: Observable<ManoPublicState>;
+
+  /**
+   * Reads the current attestation epoch from the indexer.
+   *
+   * Commitments are epoch-scoped, so any caller deriving one off-chain must
+   * pin it to this value. Read it immediately before enrolling: a card issued
+   * against a stale epoch will never validate at check-in.
+   */
+  async currentEpoch(): Promise<bigint> {
+    const contractState = await this.providers.publicDataProvider.queryContractState(
+      this.deployedContractAddress,
+    );
+    if (contractState === null) {
+      throw new Error('contract state unavailable from indexer');
+    }
+    return Mano.ledger(contractState.data).currentEpoch;
+  }
+
+  /**
+   * Closes the current attestation window and opens the next one.
+   *
+   * DESTRUCTIVE: every credential issued in the prior epoch stops validating
+   * immediately. Participants must present their card in person to re-attest,
+   * because only they hold the secret their new commitment is derived from.
+   * There is no undo - the counter only moves forward.
+   */
+  async advanceEpoch(): Promise<string> {
+    this.logger?.info('advancingAttestationEpoch');
+    const txData = await this.deployedContract.callTx.advanceEpoch();
+    this.logger?.trace({
+      transactionAdded: {
+        circuit: 'advanceEpoch',
+        txHash: txData.public.txHash,
+        blockHeight: txData.public.blockHeight,
+      },
+    });
+    return txData.public.txHash;
+  }
 
   /**
    * Enrolls a participant credential commitment into the Merkle tree.
