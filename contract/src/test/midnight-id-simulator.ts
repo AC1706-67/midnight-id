@@ -27,6 +27,7 @@ import {
   type CredentialMerklePath,
   witnesses,
 } from "../witnesses.js";
+import { epochToBytes } from "../epoch.js";
 
 // Default issuer identity for tests that do not care which key issues.
 const DEFAULT_ISSUER_SK = new Uint8Array(32).fill(7);
@@ -98,10 +99,12 @@ export class MidnightIdSimulator {
 
   // Compute a commitment using the contract's own pure circuit -
   // guaranteed to match what checkIn/verifyCredential expect.
-  public commitmentFor(secretKey: Uint8Array): Uint8Array {
+  public commitmentFor(secretKey: Uint8Array, epoch?: bigint): Uint8Array {
+    const e = epoch ?? this.getLedger().currentEpoch;
     return this.contract.circuits.publicCommitment(
       this.circuitContext,
       secretKey,
+      epochToBytes(e),
     ).result;
   }
 
@@ -128,6 +131,15 @@ export class MidnightIdSimulator {
       leafIndex,
       leaf,
     ) as CredentialMerklePath;
+  }
+
+  // Org-side: close the current attestation window. Requires the issuer key,
+  // so switchUser() without issuerSecretKey will make this throw.
+  public advanceEpoch(): Ledger {
+    this.circuitContext = this.contract.impureCircuits.advanceEpoch(
+      this.circuitContext,
+    ).context;
+    return this.getLedger();
   }
 
   public checkIn(currentDate: Uint8Array): Ledger {

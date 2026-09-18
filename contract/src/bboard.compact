@@ -8,6 +8,10 @@ export ledger usedNullifiers: Set<Bytes<32>>;
 export ledger enrollmentCount: Counter;
 export ledger totalCheckIns: Counter;
 
+// Current attestation epoch. Credentials are scoped to the epoch they were
+// issued in, so advancing this invalidates every prior credential at once.
+export ledger currentEpoch: Counter;
+
 // The issuing organization's public key. Sealed: fixed at deployment,
 // so nothing after construction can move issuance to another key.
 export sealed ledger issuerPk: Bytes<32>;
@@ -21,18 +25,19 @@ witness credentialPath(): MerkleTreePath<10, Bytes<32>>;
 witness issuerSk(): Bytes<32>;
 
 // ---------- Pure helpers ----------
-// Exported so the app and tests derive these values identically to the
-// circuits, instead of re-implementing the hashes in TypeScript.
 
-// Credential commitment for a secret key.
-export pure circuit publicCommitment(sk: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<2, Bytes<32>>>(
-    [pad(32, "midnight-id:commitment"), sk]
+// Credential commitment for a secret key, scoped to an attestation epoch.
+// Binding the epoch into the preimage is what makes revocation possible:
+// a leaf issued in epoch N cannot match what the circuits derive in epoch N+1.
+export pure circuit publicCommitment(sk: Bytes<32>, epoch: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>(
+    [pad(32, "midnight-id:commitment"), sk, epoch]
   );
 }
 
-// Daily nullifier for a secret key. checkIn calls this, so the two
-// derivations cannot drift apart.
+// Daily nullifier for a secret key. Deliberately NOT epoch-scoped: if the
+// epoch advanced mid-day, an epoch-scoped nullifier would permit a second
+// check-in on the same date.
 export pure circuit publicNullifier(sk: Bytes<32>, date: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>(
     [pad(32, "midnight-id:nullifier"), sk, date]
@@ -48,31 +53,35 @@ export pure circuit publicIssuerPk(sk: Bytes<32>): Bytes<32> {
 }
 
 // ---------- Constructor ----------
-// The deployer supplies the issuer public key. It is a constructor
-// parameter, so it is witness-tagged and needs disclose() to reach the ledger.
 constructor(pk: Bytes<32>) {
   issuerPk = disclose(pk);
 }
 
 // ---------- Circuits ----------
 
-// Org-side: insert a credential commitment.
+// Org-side: insert a credential commitment for the current epoch.
 // The tree insert never reveals the value - core privacy guarantee.
 export circuit enroll(commitment: Bytes<32>): [] {
-  // Only the holder of the issuer secret key may write a leaf. Without this,
-  // anyone could self-enroll a commitment that then passes checkIn and
-  // verifyCredential. Note ownPublicKey() is prover-supplied and would not
-  // work here; the issuer key must be proven by preimage.
   assert(disclose(publicIssuerPk(issuerSk()) == issuerPk), "not the issuer");
   credentialTree.insert(disclose(commitment));
   enrollmentCount.increment(1);
 }
 
-// Person-side: prove enrollment + burn a daily nullifier.
-// Nobody learns WHO checked in - only that a valid credential did.
+// Org-side: close the current attestation window. Every credential issued
+// in the prior epoch stops validating. Revocation is by omission - the org
+// simply does not re-attest a participant, and no revocation list is ever
+// published, so nothing leaks about who was removed or when.
+export circuit advanceEpoch(): [] {
+  assert(disclose(publicIssuerPk(issuerSk()) == issuerPk), "not the issuer");
+  currentEpoch.increment(1);
+}
+
+// Person-side: prove enrollment in the CURRENT epoch + burn a daily nullifier.
+// Nobody learns WHO checked in - only that a valid current credential did.
 export circuit checkIn(currentDate: Bytes<32>): [] {
   const sk = localSecretKey();
-  const commitment = publicCommitment(sk);
+  const epoch = currentEpoch as Field as Bytes<32>;
+  const commitment = publicCommitment(sk, epoch);
   const path = credentialPath();
   assert(path.leaf == commitment, "path does not match credential");
   assert(
@@ -85,11 +94,12 @@ export circuit checkIn(currentDate: Bytes<32>): [] {
   totalCheckIns.increment(1);
 }
 
-// Third-party side: prove "this person holds a valid Midnight ID credential"
-// without revealing which one, when it was issued, or any check-in history.
+// Third-party side: prove "this person holds a valid, currently-attested
+// credential" without revealing which one or any check-in history.
 export circuit verifyCredential(): [] {
   const sk = localSecretKey();
-  const commitment = publicCommitment(sk);
+  const epoch = currentEpoch as Field as Bytes<32>;
+  const commitment = publicCommitment(sk, epoch);
   const path = credentialPath();
   assert(path.leaf == commitment, "path does not match credential");
   assert(

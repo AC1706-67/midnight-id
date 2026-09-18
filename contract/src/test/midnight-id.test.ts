@@ -223,3 +223,76 @@ describe("regression: enroll is authorized", () => {
     expect(sim.getLedger().enrollmentCount).toEqual(2n);
   });
 });
+
+/**
+ * Epoch-scoped re-attestation (Wave 2).
+ *
+ * Enrollment used to be permanent: once a commitment was in the tree it
+ * validated forever. Binding the epoch into the commitment preimage means a
+ * leaf issued in epoch N stops matching what the circuits derive in epoch N+1,
+ * so advancing the epoch revokes every outstanding credential at once.
+ *
+ * Revocation is by omission - no revocation list is published, so nothing
+ * leaks about who was removed or when. Bound: revocation latency is at most
+ * one epoch.
+ */
+describe("epoch-scoped re-attestation", () => {
+  it("advances the epoch when called by the issuer", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    expect(sim.getLedger().currentEpoch).toEqual(0n);
+    const ledger = sim.advanceEpoch();
+    expect(ledger.currentEpoch).toEqual(1n);
+  });
+
+  it("rejects advanceEpoch from a caller holding no issuer secret key", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    sim.switchUser({
+      secretKey: strangerSk,
+      leafIndex: null,
+      currentPath: null,
+    });
+    expect(() => sim.advanceEpoch()).toThrow();
+    expect(sim.getLedger().currentEpoch).toEqual(0n);
+  });
+
+  it("revokes an outstanding credential when the epoch advances", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    const commitment = sim.commitmentFor(aliceSk, 0n);
+    sim.enroll(commitment);
+    const path = sim.pathFor(0n, commitment);
+
+    // Sanity: the credential works before the epoch turns over.
+    sim.switchUser({ secretKey: aliceSk, leafIndex: 0n, currentPath: path });
+    expect(sim.checkIn(DAY_1).totalCheckIns).toEqual(1n);
+
+    // The org closes the attestation window.
+    sim.switchUser({
+      secretKey: aliceSk,
+      leafIndex: 0n,
+      currentPath: path,
+      issuerSecretKey: new Uint8Array(32).fill(7),
+    });
+    sim.advanceEpoch();
+
+    // Same card, same real path, new day - now rejected. The epoch-0 leaf no
+    // longer matches the epoch-1 commitment the circuit derives.
+    sim.switchUser({ secretKey: aliceSk, leafIndex: 0n, currentPath: path });
+    expect(() => sim.checkIn(DAY_2)).toThrow();
+    expect(sim.getLedger().totalCheckIns).toEqual(1n);
+  });
+
+  it("restores access when the participant re-attests in the new epoch", () => {
+    const sim = new MidnightIdSimulator(aliceSk);
+    sim.enroll(sim.commitmentFor(aliceSk, 0n));
+    sim.advanceEpoch();
+
+    // Re-attestation requires the participant's own secret, so it cannot
+    // happen without them present. commitmentFor() now defaults to epoch 1.
+    const renewed = sim.commitmentFor(aliceSk);
+    sim.enroll(renewed);
+
+    const path = sim.pathFor(1n, renewed);
+    sim.switchUser({ secretKey: aliceSk, leafIndex: 1n, currentPath: path });
+    expect(sim.checkIn(DAY_2).totalCheckIns).toEqual(1n);
+  });
+});
