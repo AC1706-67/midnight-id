@@ -22,3 +22,4 @@ export * from './participant-api.js';
 export * as utils from './utils/index.js';
 
 export { pureCircuits } from '../../contract/src/managed/bboard/contract/index.js';
+export { epochToBytes } from '../../contract/src/epoch.js';

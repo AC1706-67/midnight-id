@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 import { useState } from 'react';
-import { ManoIssuerAPI, pureCircuits } from '@midnight-ntwrk/bboard-api';
+import { ManoIssuerAPI, pureCircuits, epochToBytes } from '@midnight-ntwrk/bboard-api';
 import { buildBrowserProviders } from '../lib/providers';
 import { useWalletDetection } from '../hooks/useWalletDetection';
 
@@ -33,6 +33,8 @@ export function IssuerPanel() {
   const [busy, setBusy] = useState(false);
   const [address, setAddress] = useState('');
   const [cardSecret, setCardSecret] = useState('');
+  const [epoch, setEpoch] = useState<bigint | null>(null);
+  const [confirmAdvance, setConfirmAdvance] = useState('');
   const say = (m: string) => setLog((l) => [...l, m]);
   const { availableAPIs, isDetecting } = useWalletDetection(say);
 
@@ -76,15 +78,42 @@ export function IssuerPanel() {
       // Participant secret stays in this scope. Never logged, never persisted.
       const sk = cardSecret.trim() ? unhex(cardSecret) : randomBytes32();
       if (sk.length !== 32) throw new Error('card secret must be 64 hex chars');
-      const commitment = pureCircuits.publicCommitment(sk);
-      say('commitment: ' + hex(commitment));
       say('connecting...');
       const providers = await getProviders();
       say('joining contract...');
       const issuer = await ManoIssuerAPI.join(providers, address.trim(), loadIssuerSk());
+      // Commitments are epoch-scoped. Read the epoch immediately before
+      // deriving, so the card cannot be issued against a stale window.
+      const e = await issuer.currentEpoch();
+      setEpoch(e);
+      const commitment = pureCircuits.publicCommitment(sk, epochToBytes(e));
+      say('attestation epoch: ' + e);
+      say('commitment: ' + hex(commitment));
       say('proving + submitting enroll (~30s)...');
       const txHash = await issuer.enroll(commitment);
       say('ENROLLED. txHash: ' + txHash);
+    } catch (e: any) {
+      say('ERROR: ' + (e?.message ?? String(e)));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onAdvanceEpoch() {
+    setBusy(true);
+    try {
+      if (!address.trim()) throw new Error('deploy or paste a contract address first');
+      say('connecting...');
+      const providers = await getProviders();
+      const issuer = await ManoIssuerAPI.join(providers, address.trim(), loadIssuerSk());
+      const from = await issuer.currentEpoch();
+      say(`advancing epoch ${from} -> ${from + 1n} (~30s)...`);
+      const txHash = await issuer.advanceEpoch();
+      const now = await issuer.currentEpoch();
+      setEpoch(now);
+      setConfirmAdvance('');
+      say('EPOCH ADVANCED to ' + now + '. txHash: ' + txHash);
+      say('Every card issued before this point is now invalid until re-attested.');
     } catch (e: any) {
       say('ERROR: ' + (e?.message ?? String(e)));
     } finally {
@@ -116,6 +145,27 @@ export function IssuerPanel() {
       <div style={{ marginTop: 8 }}>
         <button onClick={() => setCardSecret(hex(randomBytes32()))} disabled={busy}>generate card secret</button>
         <button style={{ marginLeft: 8 }} onClick={onEnroll} disabled={busy || isDetecting}>enroll participant</button>
+      </div>
+      <div style={{ marginTop: 20, padding: 12, border: '1px solid #a33' }}>
+        <strong>Attestation epoch{epoch === null ? '' : ': ' + epoch}</strong>
+        <p style={{ margin: '8px 0' }}>
+          Advancing invalidates <em>every</em> outstanding card. Each participant
+          must return in person to re-attest - only they hold the secret their
+          new credential is derived from. This cannot be undone.
+        </p>
+        <input
+          style={{ width: 300 }}
+          placeholder='type ADVANCE to enable'
+          value={confirmAdvance}
+          onChange={(e) => setConfirmAdvance(e.target.value)}
+        />
+        <button
+          style={{ marginLeft: 8 }}
+          onClick={onAdvanceEpoch}
+          disabled={busy || isDetecting || confirmAdvance !== 'ADVANCE'}
+        >
+          advance epoch
+        </button>
       </div>
       <pre style={{ marginTop: 16, whiteSpace: 'pre-wrap' }}>{log.join('\n')}</pre>
     </div>
